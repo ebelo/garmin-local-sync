@@ -4,9 +4,9 @@ import zipfile
 from collections import Counter
 
 from garmin_local_sync import cli
-from garmin_local_sync.api import ApiError
-from garmin_local_sync.storage import Store
-from garmin_local_sync.validation import check_store
+from garmin_local_sync.adapters.geopackage import GeoPackageRepository
+from garmin_local_sync.adapters.http import ApiError
+from garmin_local_sync.adapters.validation import check_store
 
 
 def test_complete_cli_import_retries_failed_activity_then_becomes_incremental(tmp_path, monkeypatch):
@@ -85,7 +85,7 @@ def test_complete_cli_import_retries_failed_activity_then_becomes_incremental(tm
     assert cli.main(args) == 0
     assert Counter(FakeApi.downloads) == Counter({901: 1, 902: 2})
     path = root / "garmin.gpkg"
-    store = Store(path, read_only=True)
+    store = GeoPackageRepository(path, read_only=True)
     assert store.db.execute("SELECT count(*) FROM activity_samples").fetchone()[0] == 4
     assert store.db.execute("SELECT count(*) FROM activity_tracks").fetchone()[0] == 2
     assert store.db.execute("SELECT count(*) FROM sync_errors").fetchone()[0] == 0

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 — unreleased
+
+- **Breaking Python imports:** remove the seven root-level `api`, `datasets`,
+  `formats`, `geography`, `storage`, `sync` and `validation` compatibility modules.
+  Use explicit `domain`, `application` and `adapters` imports; see the
+  [migration guide](docs/architecture.md#entry-points-and-python-imports).
+- Migrate the synthetic example and integration tests to canonical adapters and
+  application workflows; wire `GarminSource` explicitly for HTTP-backed workflows.
+- Keep CLI commands/options, schema version 2, archives and geographic/data
+  semantics unchanged.
+
 ## 0.2.2 — unreleased
 
 - Resolve Sonar maintainability findings by separating decoding, validation,

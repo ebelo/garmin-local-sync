@@ -4,11 +4,11 @@ import sqlite3
 
 import pytest
 
+from garmin_local_sync.adapters.decoding import sample_row
+from garmin_local_sync.adapters.geopackage import GeoPackageRepository
+from garmin_local_sync.application.sync import refresh_cutoff
 from garmin_local_sync.cli import main
 from garmin_local_sync.example import create_example
-from garmin_local_sync.formats import sample_row
-from garmin_local_sync.storage import Store
-from garmin_local_sync.sync import refresh_cutoff
 
 
 def test_refresh_window_is_exactly_n_calendar_days_and_zero_disables_it():
@@ -45,7 +45,7 @@ def test_foreign_sqlite_file_is_never_adopted_or_modified(tmp_path):
         db.execute("CREATE TABLE unrelated(value TEXT)")
     before = digest(path)
     with pytest.raises(RuntimeError, match="Not a GeoPackage"):
-        Store(path)
+        GeoPackageRepository(path)
     assert digest(path) == before
 
 
@@ -56,7 +56,7 @@ def test_unknown_schema_is_rejected_without_rewriting_database(tmp_path):
         db.execute("UPDATE schema_version SET version=99")
     before = digest(path)
     with pytest.raises(RuntimeError, match="Unsupported"):
-        Store(path)
+        GeoPackageRepository(path)
     assert digest(path) == before
 
 
@@ -67,11 +67,11 @@ def test_legacy_schema_is_migrated_only_on_a_write_open(tmp_path):
         db.execute("ALTER TABLE activity_samples DROP COLUMN segment_index")
         db.execute("UPDATE schema_version SET version=1")
     before = digest(path)
-    store = Store(path, read_only=True)
+    store = GeoPackageRepository(path, read_only=True)
     assert store.db.execute("SELECT version FROM schema_version").fetchone()[0] == 1
     store.close()
     assert digest(path) == before
-    store = Store(path)
+    store = GeoPackageRepository(path)
     assert store.db.execute("SELECT version FROM schema_version").fetchone()[0] == 2
     assert store.db.execute("SELECT count(*) FROM activity_samples").fetchone()[0] == 8
     assert store.db.execute("SELECT DISTINCT segment_index FROM activity_samples").fetchall() == [(0,)]
@@ -81,7 +81,7 @@ def test_legacy_schema_is_migrated_only_on_a_write_open(tmp_path):
 def test_refresh_failure_invalidates_the_old_completion_checkpoint(tmp_path):
     path = tmp_path / "example.gpkg"
     create_example(path)
-    store = Store(path)
+    store = GeoPackageRepository(path)
     row = sample_row(1001, 0, {"longitude": 30, "latitude": 40})
     with pytest.raises(sqlite3.IntegrityError):
         store.save_activity(1001, {}, [row, row], [], "synthetic")

@@ -5,8 +5,9 @@ from collections import Counter
 from pathlib import Path
 
 from garmin_local_sync import backfill, cli
-from garmin_local_sync.storage import Store
-from garmin_local_sync.sync import sync_activity_workouts, sync_wellness
+from garmin_local_sync.adapters.garmin import GarminSource
+from garmin_local_sync.adapters.geopackage import GeoPackageRepository
+from garmin_local_sync.application.sync import sync_activity_workouts, sync_wellness
 
 
 def test_all_data_covers_each_read_endpoint_and_reuses_checkpoints(tmp_path, monkeypatch):
@@ -35,7 +36,7 @@ def test_all_data_covers_each_read_endpoint_and_reuses_checkpoints(tmp_path, mon
             if "/activity-service/activity/" in path:
                 return {"metadataDTO": {"manualActivity": True}}
             if binary:
-                from garmin_local_sync.api import ApiError
+                from garmin_local_sync.adapters.http import ApiError
 
                 raise ApiError(404, path)
             if "/weight/all/" in path:
@@ -95,7 +96,7 @@ def test_all_data_covers_each_read_endpoint_and_reuses_checkpoints(tmp_path, mon
 
 class StoreContext:
     def __init__(self, path):
-        self.store = Store(path)
+        self.store = GeoPackageRepository(path)
 
     def __enter__(self):
         return self.store
@@ -116,18 +117,18 @@ def test_full_detail_options_and_weight_measurement_identity(tmp_path):
 
     with StoreContext(tmp_path / "test.gpkg") as store:
         day = dt.date(2020, 1, 1)
-        sync_wellness(FakeApi(), store, day, day, detailed=True)
+        sync_wellness(GarminSource(FakeApi()), store, day, day, detailed=True)
         assert calls["/periodichealth-service/menstrualcycle/dayview/2020-01-01"]["includeAnalysis"] == "true"
         assert calls["/nutrition-service/food/logs/2020-01-01"]["includeMedia"] == "true"
         assert calls["/usersummary-service/usersummary/daily"] == {"calendarDate": "2020-01-01"}
         # Empty results still checkpoint and prevent expensive repeated date scans.
         count = len(hits)
-        sync_wellness(FakeApi(), store, day, day, detailed=True)
+        sync_wellness(GarminSource(FakeApi()), store, day, day, detailed=True)
         assert len(hits) == count
 
 
 def test_activity_workouts_retry_independently_of_original_file(tmp_path):
-    from garmin_local_sync.api import ApiError
+    from garmin_local_sync.adapters.http import ApiError
 
     class FakeApi:
         fail = True
@@ -141,12 +142,12 @@ def test_activity_workouts_retry_independently_of_original_file(tmp_path):
         with store.db:
             store.save_summary({"activityId": 1, "activityType": {}})
         api = FakeApi()
-        assert sync_activity_workouts(api, store, refresh_days=0) == 0
+        assert sync_activity_workouts(GarminSource(api), store, refresh_days=0) == 0
         assert store.db.execute("SELECT count(*) FROM sync_errors").fetchone()[0] == 1
         api.fail = False
-        assert sync_activity_workouts(api, store, refresh_days=0) == 1
+        assert sync_activity_workouts(GarminSource(api), store, refresh_days=0) == 1
         assert store.db.execute("SELECT count(*) FROM sync_errors").fetchone()[0] == 0
-        assert sync_activity_workouts(api, store, refresh_days=0) == 0
+        assert sync_activity_workouts(GarminSource(api), store, refresh_days=0) == 0
 
 
 def test_backfill_forwards_all_data_options_only_to_sync(tmp_path, monkeypatch):
