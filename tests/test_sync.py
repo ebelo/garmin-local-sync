@@ -6,16 +6,17 @@ import zipfile
 import pytest
 from osgeo import ogr
 
-from garmin_local_sync.api import Api, ApiError
-from garmin_local_sync.formats import parse_archive, sample_row
-from garmin_local_sync.storage import Store
-from garmin_local_sync.sync import covered, intervals, sync_wellness
+from garmin_local_sync.adapters.decoding import parse_archive, sample_row
+from garmin_local_sync.adapters.garmin import GarminSource
+from garmin_local_sync.adapters.geopackage import GeoPackageRepository
+from garmin_local_sync.adapters.http import Api, ApiError
+from garmin_local_sync.application.sync import covered, intervals, sync_wellness
 from garmin_local_sync.util import dumps
 
 
 @pytest.fixture
 def store(tmp_path):
-    db = Store(tmp_path / "test.gpkg")
+    db = GeoPackageRepository(tmp_path / "test.gpkg")
     yield db
     db.close()
 
@@ -129,11 +130,11 @@ def test_health_error_is_not_checkpointed_and_next_run_retries(store):
 
     api = FakeApi()
     start = dt.date(2020, 1, 1)
-    sync_wellness(api, store, start, start, datasets="steps")
+    sync_wellness(GarminSource(api), store, start, start, datasets="steps")
     assert store.db.execute("SELECT count(*) FROM api_responses").fetchone()[0] == 0
     assert store.db.execute("SELECT count(*) FROM sync_errors").fetchone()[0] == 1
     api.failed = False
-    sync_wellness(api, store, start, start, datasets="steps")
+    sync_wellness(GarminSource(api), store, start, start, datasets="steps")
     assert store.db.execute("SELECT count(*) FROM sync_errors").fetchone()[0] == 0
     assert store.db.execute("SELECT count(*) FROM api_responses").fetchone()[0] == 1
 
@@ -151,7 +152,7 @@ def test_failed_refresh_of_previously_complete_history_is_retried(store):
 
     api = FakeApi()
     day = dt.date(2020, 1, 1)
-    sync_wellness(api, store, day, day, datasets="steps")
+    sync_wellness(GarminSource(api), store, day, day, datasets="steps")
     assert api.calls == 1
     assert store.db.execute("SELECT count(*) FROM sync_errors").fetchone()[0] == 0
 
@@ -168,11 +169,11 @@ def test_failed_large_date_range_splits_and_resumes_from_subranges(store):
 
     api = FakeApi()
     start, end = dt.date(2020, 1, 1), dt.date(2020, 1, 4)
-    sync_wellness(api, store, start, end, datasets="daily")
+    sync_wellness(GarminSource(api), store, start, end, datasets="daily")
     assert covered(store, "daily", start.isoformat(), end.isoformat())
     assert len(api.calls) == 7
     assert store.db.execute("SELECT count(*) FROM sync_errors").fetchone()[0] == 0
-    sync_wellness(api, store, start, end, datasets="daily")
+    sync_wellness(GarminSource(api), store, start, end, datasets="daily")
     assert len(api.calls) == 7
 
 

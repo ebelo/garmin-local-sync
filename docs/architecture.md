@@ -82,13 +82,31 @@ its frozen mode/date, retries incomplete work and checks the result. The applica
 does not know about subprocesses. Resource lifetimes and single-writer locking are
 the responsibility of driving adapters; library callers must preserve that contract.
 
-## Compatibility
+## Entry points and Python imports
 
 The CLI flags, original archive layout and application schema **2** are unchanged.
-Root modules `api`, `formats`, `geography`, `storage`, `datasets`, `validation` and
-`sync` retain compatibility facades. Existing callers using `Store` or tuple-shaped
-parser results continue to work; new code should use typed domain values and the
-explicit layers. Compatibility facades delegate rather than duplicate workflows.
+Use the installed CLI for normal operation. Python integrations use the explicit
+layers; library callers compose adapters with `SyncService` and preserve locking
+and resource lifetimes as described above.
+
+Version **0.3.0** removes the seven root-level import facades introduced during the
+initial refactor. This is a breaking change to Python imports, not the CLI or data
+format. The package is alpha; these internal module paths are not a stable SDK.
+
+| Removed module | Import from instead |
+|---|---|
+| `garmin_local_sync.api` | `garmin_local_sync.adapters.http` (`Api`, `ApiError`) |
+| `garmin_local_sync.datasets` | `domain.datasets` for policies; `adapters.garmin_routes` for HTTP routes |
+| `garmin_local_sync.formats` | `garmin_local_sync.adapters.decoding` |
+| `garmin_local_sync.geography` | `garmin_local_sync.adapters.geometry` for OGR; `domain.geography` for pure rules |
+| `garmin_local_sync.storage` | `garmin_local_sync.adapters.geopackage` (`GeoPackageRepository`, formerly `Store`); `domain.health` for normalization |
+| `garmin_local_sync.sync` | `garmin_local_sync.application.sync`; provide `GarminSource(Api(...))`, not a raw HTTP transport |
+| `garmin_local_sync.validation` | `garmin_local_sync.adapters.validation` |
+
+The former `datasets.RANGE_DAYS` convenience map is no longer exported. Read each
+policy's `window_days` from `domain.datasets.RANGE_DATASETS` instead. Activity
+parser tuple results remain supported by the decoding/persistence adapters; this
+change removes redundant import and composition wrappers, not data conversion.
 
 ## Verification
 

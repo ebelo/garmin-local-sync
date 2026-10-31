@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from garmin_local_sync.adapters import http
-from garmin_local_sync.api import Api, ApiError
+from garmin_local_sync.adapters.http import Api, ApiError
 
 
 @pytest.fixture

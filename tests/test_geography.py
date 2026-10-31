@@ -7,11 +7,11 @@ import pytest
 from fitdecode.utils import compute_crc
 from osgeo import ogr
 
+from garmin_local_sync.adapters.decoding import parse_archive, parse_xml, sample_row
+from garmin_local_sync.adapters.geometry import activity_geometries
+from garmin_local_sync.adapters.geopackage import GeoPackageRepository
+from garmin_local_sync.adapters.validation import check_store
 from garmin_local_sync.example import create_example
-from garmin_local_sync.formats import parse_archive, parse_xml, sample_row
-from garmin_local_sync.geography import activity_geometries
-from garmin_local_sync.storage import Store
-from garmin_local_sync.validation import check_store
 
 
 def coordinates(geometry):
@@ -195,7 +195,7 @@ def test_example_passes_independent_gdal_conformance_validator(tmp_path):
 def test_geography_check_detects_a_corrupt_spatial_index(tmp_path):
     path = tmp_path / "example.gpkg"
     create_example(path)
-    store = Store(path)
+    store = GeoPackageRepository(path)
     with store.db:
         store.db.execute("UPDATE rtree_activity_starts_geom SET minx=0,maxx=0,miny=0,maxy=0")
     report = check_store(store)
@@ -207,7 +207,7 @@ def test_geography_check_detects_a_corrupt_spatial_index(tmp_path):
 def test_spatial_index_is_updated_when_an_activity_is_refreshed(tmp_path):
     path = tmp_path / "example.gpkg"
     create_example(path)
-    store = Store(path)
+    store = GeoPackageRepository(path)
     before = store.db.execute("SELECT count(*) FROM activity_tracks").fetchone()[0]
     store.save_activity(
         1001,

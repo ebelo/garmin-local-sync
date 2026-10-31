@@ -12,11 +12,11 @@
   strength claims based on ambiguous movement labels or cross-equipment loads.
 - Preserve idempotence, checkpoint honesty, bounded retries, and one-writer locking.
 - Keep dependency direction inward: domain uses only the standard library;
-  application imports domain and its own ports, never adapters or compatibility
-  facades. HTTP paths, SQL, filesystem operations and GDAL objects belong to adapters.
-- Add workflows through `application.sync.SyncService` and the ports; keep legacy root
-  modules as compatibility facades, not a second implementation. Test core policy
-  with in-memory ports and adapters with integration/geography tests.
+  application imports domain and its own ports, never adapters or root-level helpers.
+  HTTP paths, SQL, filesystem operations and GDAL objects belong to adapters.
+- Add workflows through `application.sync.SyncService` and the ports. Import concrete
+  adapters from `adapters/`; do not reintroduce root-level compatibility shims. Test
+  core policy with in-memory ports and adapters with integration/geography tests.
 - Run `ruff check .`, `ruff format --check .`, and `pytest` in the project environment.
 - Before release-ready claims, run `python scripts/check_quality.py` for the shared
   local/CI gate: lint/format, types, security/secrets, coverage, packaging, installed

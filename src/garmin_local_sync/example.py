@@ -6,17 +6,17 @@ import json
 import os
 from pathlib import Path
 
+from .adapters.decoding import sample_row
+from .adapters.geopackage import GeoPackageRepository, status
+from .adapters.validation import check_store
 from .config import UTC
-from .formats import sample_row
-from .storage import Store, status
-from .validation import check_store
 
 
 def create_example(path):
     path = Path(path).expanduser().resolve()
     if path.exists():
         raise FileExistsError("Refusing to replace an existing example/database")
-    store = Store(path)
+    store = GeoPackageRepository(path)
     base = dt.datetime(2024, 1, 15, 10, tzinfo=UTC)
     routes: list[tuple[int, str, list[tuple[float | None, float | None, float | None, int]]]] = [
         (
