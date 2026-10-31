@@ -18,7 +18,7 @@ def create_example(path):
         raise FileExistsError("Refusing to replace an existing example/database")
     store = Store(path)
     base = dt.datetime(2024, 1, 15, 10, tzinfo=UTC)
-    routes = [
+    routes: list[tuple[int, str, list[tuple[float | None, float | None, float | None, int]]]] = [
         (
             1001,
             "Synthetic separated segments",

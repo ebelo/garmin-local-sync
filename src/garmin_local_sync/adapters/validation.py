@@ -1,6 +1,7 @@
 """Read-only checks of SQLite integrity and the geographic storage contract."""
 
 import math
+from itertools import pairwise
 
 from osgeo import ogr
 
@@ -61,17 +62,22 @@ def check_store(store):
         if srs is None or srs.GetAuthorityCode(None) != "4326":
             errors.append(f"{name}: CRS is not EPSG:4326")
         orphans = db.execute(
-            f'SELECT count(*) FROM "{name}" g LEFT JOIN activities a USING(activity_id) WHERE a.activity_id IS NULL'
+            # fixed layer names above.
+            f'SELECT count(*) FROM "{name}" g LEFT JOIN activities a USING(activity_id) WHERE a.activity_id IS NULL'  # nosec B608
         ).fetchone()[0]
         if orphans:
             errors.append(f"{name}: {orphans} orphan activity links")
         rtree = f"rtree_{name}_{layer.GetGeometryColumn()}"
+        # Geometry-column metadata is not trusted SQL. Quote its identifier;
+        # all data values below use bound parameters.
+        quoted_rtree = '"' + rtree.replace('"', '""') + '"'
         has_index = db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (rtree,)
         ).fetchone()
         if not has_index:
             errors.append(f"{name}: missing spatial index")
-        elif db.execute(f'SELECT count(*) FROM "{rtree}"').fetchone()[0] != layers[name]:
+        # escaped identifier above.
+        elif db.execute(f"SELECT count(*) FROM {quoted_rtree}").fetchone()[0] != layers[name]:  # nosec B608
             errors.append(f"{name}: spatial-index count differs from feature count")
         for feature in layer:
             geom = feature.GetGeometryRef()
@@ -87,8 +93,10 @@ def check_store(store):
             ):
                 errors.append(f"{label}: geometry outside valid longitude/latitude bounds")
             if has_index:
+                # Escaped identifier above; feature ID is bound.
                 bounds = db.execute(
-                    f'SELECT minx,maxx,miny,maxy FROM "{rtree}" WHERE id=?', (feature.GetFID(),)
+                    f"SELECT minx,maxx,miny,maxy FROM {quoted_rtree} WHERE id=?",  # nosec B608
+                    (feature.GetFID(),),
                 ).fetchone()
                 if bounds is None or not (
                     bounds[0] <= envelope[0]
@@ -100,7 +108,7 @@ def check_store(store):
             if expected == ogr.wkbMultiLineString:
                 for i in range(geom.GetGeometryCount()):
                     points = geom.GetGeometryRef(i).GetPoints()
-                    if any(abs(a[0] - b[0]) > 180 for a, b in zip(points, points[1:])):
+                    if any(abs(a[0] - b[0]) > 180 for a, b in pairwise(points)):
                         errors.append(f"{label}: unsplit date-line crossing")
     ds = None
     return {

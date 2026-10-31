@@ -1,6 +1,7 @@
 import json
 import math
 import struct
+from itertools import pairwise
 
 import pytest
 from fitdecode.utils import compute_crc
@@ -28,7 +29,7 @@ def test_date_line_splits_short_crossing_in_both_directions(a, b):
     track, _ = activity_geometries(rows([(a, 10, 0), (b, 12, 0)]))
     assert track is not None and track.IsValid()
     for segment in coordinates(track):
-        assert all(abs(x[0] - y[0]) <= 180 for x, y in zip(segment, segment[1:]))
+        assert all(abs(x[0] - y[0]) <= 180 for x, y in pairwise(segment))
     assert math.isclose(
         sum(abs(s[-1][0] - s[0][0]) for s in coordinates(track)), min(abs(b - a), 360 - abs(b - a))
     )
@@ -59,6 +60,7 @@ def test_backwards_timestamps_break_geometry_without_reordering_samples():
                 "2023-12-31T23:59:00+00:00",
                 "2024-01-01T00:02:00+00:00",
             ],
+            strict=True,
         )
         for a, i in [row[:2]]
     ]
@@ -108,6 +110,22 @@ def test_original_xml_with_utf8_bom_is_detected():
 def test_malformed_xml_is_a_recoverable_item_error():
     with pytest.raises(ValueError, match="Invalid GPX/TCX XML"):
         parse_archive(b"<gpx><broken>", 1)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        '<!ENTITY secret SYSTEM "file:///etc/passwd">',
+        '<!ENTITY secret "expanded entity content">',
+    ],
+)
+def test_xml_entities_are_rejected_as_recoverable_decode_errors(declaration):
+    from garmin_local_sync.adapters.decoding import OriginalActivityDecoder
+    from garmin_local_sync.domain.errors import DecodeError
+
+    blob = f'<!DOCTYPE gpx [{declaration}]><gpx><trkpt lat="1" lon="2"><name>&secret;</name></trkpt></gpx>'.encode()
+    with pytest.raises(DecodeError, match="Invalid GPX/TCX XML"):
+        OriginalActivityDecoder().decode(blob, 1)
 
 
 def test_fit_semicircles_altitude_and_timer_stop_with_real_binary_decoder():

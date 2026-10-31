@@ -40,7 +40,7 @@ def build_geography(samples: Iterable[Sample], fallback: Coordinate | None = Non
         ):
             finish()
         previous_segment, previous_time = segment, timestamp
-        if not valid_coords(lat, lon):
+        if lat is None or lon is None or not valid_coords(lat, lon):
             finish()
             continue
         point = Coordinate(lon, lat)

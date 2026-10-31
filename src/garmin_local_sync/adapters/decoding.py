@@ -4,10 +4,12 @@ import contextlib
 import datetime as dt
 import io
 import math
-import xml.etree.ElementTree as ET
 import zipfile
+from typing import Any
 
 import fitdecode
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from ..config import UTC
 from ..domain.errors import DecodeError
@@ -52,7 +54,8 @@ def sample_row(aid, index, values, segment=0):
 
 
 def parse_fit(content, aid, offset=0):
-    samples, messages = [], []
+    samples: list[tuple] = []
+    messages: list[tuple] = []
     segment = 0
     with fitdecode.FitReader(io.BytesIO(content), check_crc=fitdecode.CrcCheck.WARN) as reader:
         for frame in reader:
@@ -79,9 +82,9 @@ def parse_fit(content, aid, offset=0):
 def parse_xml(content, aid, offset=0):
     try:
         root = ET.fromstring(content)
-    except ET.ParseError:
+    except (ET.ParseError, DefusedXmlException):
         raise ValueError("Invalid GPX/TCX XML") from None
-    samples = []
+    samples: list[tuple] = []
     segment_counter = -1
 
     def points(element, segment=0):
@@ -97,15 +100,17 @@ def parse_xml(content, aid, offset=0):
                 yield from points(child, segment)
 
     for point, segment in points(root):
-        values = {}
+        values: dict[str, Any] = {}
         if "lat" in point.attrib and "lon" in point.attrib:
             with contextlib.suppress(ValueError):
                 values.update(latitude=float(point.attrib["lat"]), longitude=float(point.attrib["lon"]))
         for element in point.iter():
             name = element.tag.rsplit("}", 1)[-1]
             text = element.text.strip() if element.text else None
-            if not text and name != "HeartRateBpm":
-                continue
+            if not text:
+                if name != "HeartRateBpm":
+                    continue
+                text = ""
             mapping = {
                 "LatitudeDegrees": "latitude",
                 "LongitudeDegrees": "longitude",
@@ -155,7 +160,8 @@ def parse_archive(content, aid):
         files = [(".xml", content)]
     if not files:
         raise RuntimeError("No supported FIT/GPX/TCX file in activity download")
-    samples, messages = [], []
+    samples: list[tuple] = []
+    messages: list[tuple] = []
     segment_offset = 0
     for ext, blob in files:
         rows, meta = (parse_fit if ext == ".fit" else parse_xml)(blob, aid, len(samples))

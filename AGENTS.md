@@ -18,6 +18,9 @@
   modules as compatibility facades, not a second implementation. Test core policy
   with in-memory ports and adapters with integration/geography tests.
 - Run `ruff check .`, `ruff format --check .`, and `pytest` in the project environment.
+- Before release-ready claims, run `python scripts/check_quality.py` for the shared
+  local/CI gate: lint/format, types, security/secrets, coverage, packaging, installed
+  CLI/GeoPackage conformance and resolved-runtime dependency audit. Keep reports ignored.
   Geography changes require a synthetic OGR round-trip and conformance validation.
 - Build and smoke-test the wheel when packaging or entry points change.
 - Do not publish or push unless the user explicitly authorizes that action.

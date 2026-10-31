@@ -1,6 +1,7 @@
 """Vendor/legacy representations converted at infrastructure boundaries."""
 
 import json
+from typing import Any
 
 from ..domain.models import ActivitySummary, Message, Sample
 from ..util import dumps
@@ -29,15 +30,30 @@ SUMMARY_FIELDS = {
 
 
 def summary_from_payload(payload: dict) -> ActivitySummary:
+    values: dict[str, Any] = {field: payload.get(key) for field, key in SUMMARY_FIELDS.items()}
     return ActivitySummary(
-        **{field: payload.get(key) for field, key in SUMMARY_FIELDS.items()},
+        **values,
         activity_type=payload.get("activityType", {}).get("typeKey"),
         raw=payload,
     )
 
 
 def sample_from_row(row) -> Sample:
-    return Sample(*row[1:12], raw=json.loads(row[12]), segment_index=row[13] if len(row) > 13 else 0)
+    return Sample(
+        index=row[1],
+        timestamp_utc=row[2],
+        latitude=row[3],
+        longitude=row[4],
+        altitude_m=row[5],
+        distance_m=row[6],
+        speed_mps=row[7],
+        heart_rate_bpm=row[8],
+        cadence_rpm=row[9],
+        power_w=row[10],
+        temperature_c=row[11],
+        raw=json.loads(row[12]),
+        segment_index=row[13] if len(row) > 13 else 0,
+    )
 
 
 def sample_to_row(sample: Sample, activity_id: int):

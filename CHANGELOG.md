@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 — unreleased
+
+- Add a shared local/CI Python quality gate with lint/format, package-wide type
+  checking, security/secret scans, branch-aware coverage, strict package metadata,
+  isolated installed-wheel checks and resolved-runtime vulnerability auditing.
+- Harden GPX/TCX parsing with defusedxml; reject XML entity declarations as recoverable
+  decode failures, and escape spatial-index metadata identifiers in validation SQL.
+- Require Requests 2.33+ to exclude older releases with known security advisories.
+- Add offline authentication-cache and bounded HTTP retry regression tests.
+- Resolve type/lint findings while preserving the schema and geographic contract.
+
 ## 0.2.0 — unreleased
 
 - Refactor into a lightweight hexagonal monolith with explicit source, repository,

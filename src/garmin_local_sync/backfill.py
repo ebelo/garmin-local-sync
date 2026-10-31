@@ -7,7 +7,9 @@ import datetime as dt
 import fcntl
 import json
 import os
-import subprocess
+
+# executes this package using the current interpreter, never a shell.
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -48,7 +50,8 @@ def worker(root=None, delay=1.0, key_file=DEFAULT_KEY, all_data=False, refresh_d
                 sync_options = ["--refresh-days", str(refresh_days), "--end", report["end_date"]]
                 if all_data:
                     sync_options.append("--all-data")
-            return subprocess.run(
+            # fixed interpreter/module; options passed as argv, shell=False.
+            return subprocess.run(  # nosec B603
                 [
                     sys.executable,
                     "-m",
@@ -146,7 +149,8 @@ def main():
             return 0
     with log_path.open("a") as log:
         os.chmod(log_path, 0o600)
-        child = subprocess.Popen(
+        # fixed interpreter/module; options passed as argv, shell=False.
+        child = subprocess.Popen(  # nosec B603
             [
                 sys.executable,
                 "-m",

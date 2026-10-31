@@ -36,10 +36,10 @@ class Api:
             raise RuntimeError("Invalid API key file format")
         self.fingerprint = hashlib.sha256(self.key.encode()).hexdigest()
         self.cache = self.key_file.parent / "local-sync-bearer.json"
-        self.token = None
-        self.expires = 0
+        self.token: str | None = None
+        self.expires: float = 0.0
         self.delay = delay
-        self.last_request = 0
+        self.last_request = 0.0
         self.session = requests.Session()
         self.session.headers["User-Agent"] = f"garmin-local-sync/{__version__} (personal use)"
         with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
@@ -110,6 +110,8 @@ class Api:
     def get(self, path, params=None, binary=False):
         self.authenticate()
         for attempt in range(2):
+            if self.token is None:
+                raise RuntimeError("Authentication did not supply a bearer token")
             r = self._request("GET", path, params=params, headers={"Authorization": "Bearer " + self.token})
             if r.status_code == 401 and attempt == 0:
                 self.authenticate(force=True)

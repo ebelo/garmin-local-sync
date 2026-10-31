@@ -232,7 +232,8 @@ class GeoPackageRepository:
         ]
         updates = ",".join(f"{c}=excluded.{c}" for c in cols[1:])
         self.db.execute(
-            f"INSERT INTO activities({','.join(cols)}) VALUES({','.join('?' for _ in cols)}) ON CONFLICT(activity_id) DO UPDATE SET {updates}",
+            # column names are fixed above; values are bound.
+            f"INSERT INTO activities({','.join(cols)}) VALUES({','.join('?' for _ in cols)}) ON CONFLICT(activity_id) DO UPDATE SET {updates}",  # nosec B608
             values,
         )
 
@@ -398,7 +399,7 @@ class GeoPackageRepository:
 
 
 def status(store):
-    result = {"database": str(store.path)}
+    result: dict = {"database": str(store.path)}
     for name in [
         "activities",
         "activity_samples",
@@ -407,7 +408,8 @@ def status(store):
         "daily_metrics",
         "sync_errors",
     ]:
-        result[name] = store.db.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
+        # fixed table allowlist above.
+        result[name] = store.db.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]  # nosec B608
     result["activities_imported"] = store.db.execute(
         "SELECT count(*) FROM activities WHERE samples_synced_at IS NOT NULL"
     ).fetchone()[0]
@@ -415,7 +417,7 @@ def status(store):
         "SELECT min(start_time_local),max(start_time_local) FROM activities"
     ).fetchone()
     result["health_datasets"] = [
-        dict(zip(["dataset", "records", "first_date", "last_date"], row))
+        dict(zip(["dataset", "records", "first_date", "last_date"], row, strict=True))
         for row in store.db.execute(
             "SELECT dataset,count(*),min(calendar_date),max(calendar_date) FROM wellness_records GROUP BY dataset ORDER BY dataset"
         )

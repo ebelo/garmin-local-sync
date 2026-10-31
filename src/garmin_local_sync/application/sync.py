@@ -181,7 +181,7 @@ def sync_wellness(
                 dataset_start = max(start, first)
         completed, skipped, consecutive_failures = 0, 0, 0
 
-        def fetch_window(a, b):
+        def fetch_window(a, b, dataset=dataset):
             nonlocal completed, skipped, requests_done, consecutive_failures
             window = DateWindow(a, b)
             task = f"{dataset}:{window.key}"
@@ -218,7 +218,9 @@ def sync_wellness(
                 progress(f"Health {dataset} {window.key}: {error.kind.value}; recorded for retry")
                 consecutive_failures += 1
                 if consecutive_failures >= 5:
-                    raise RuntimeError("Repeated source failures; completed data saved, rerun to resume")
+                    raise RuntimeError(
+                        "Repeated source failures; completed data saved, rerun to resume"
+                    ) from error
                 return False
 
         for a, b in intervals(dataset_start, end, spec.window_days):
