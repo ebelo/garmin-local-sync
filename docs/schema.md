@@ -134,7 +134,7 @@ particular, FIT exercise-category candidates may differ from corrected Garmin
 Connect exercise names; neither a first set nor a watch classification is a
 standardized strength test.
 
-## Checkpoints, refresh, and migration
+## Checkpoints and refresh
 
 An activity's completion timestamp is cleared before refreshing its geometry. OGR
 commits geometry and indexes; a subsequent SQLite transaction replaces samples and
@@ -143,50 +143,19 @@ activity remains incomplete and is replaced on the next run. Previous sample row
 can remain until that replacement succeeds. For analyses requiring a fully imported
 snapshot, join to `activities` and require `samples_synced_at IS NOT NULL`.
 
-3D completion additionally requires `geometry_3d_synced_at IS NOT NULL`. This is a
-processing checkpoint, not a promise that every sample has elevation or that a
-3D feature exists: manual activities, isolated points and missing-Z paths can
-legitimately have no 3D line. Import refreshes invalidate both checkpoints before
-geometry updates and set them only after geometry and attributes succeed.
+The same activity-import checkpoint covers samples, messages and all 2D/3D geometry.
+There is no separate derived-geometry checkpoint or rebuild workflow. A completed
+activity can legitimately have no 3D line: manual activities, isolated points and
+missing-Z paths may not contain enough usable XYZ observations.
 
 Health checkpoints are committed only after successful responses, including HTTP
 204 (no data). Overlapping date windows replace normalized records in that interval;
 full request responses remain archived by request key. Failed windows are retried.
 
-### Schema migration and offline rebuilding
+### Schema policy
 
-Schema-1 and schema-2 databases remain readable without modification. A write-open
-migrates to schema **3**, adding the derived layer, metadata and nullable per-activity
-3D checkpoints. The version marker changes only after migration steps complete;
-an interrupted upgrade can be retried. Existing source rows and 2D features are not
-rewritten, and historical 3D checkpoints remain pending until built.
-
-Build those features entirely from stored samples, without API credentials or
-network requests:
-
-```sh
-garmin-sync rebuild-3d --root /path/to/private/export
-```
-
-The command takes the same one-writer lock as sync, processes only completed source
-imports and checkpoints each activity. Run again to resume or retry failures;
-`--activity-limit N` bounds a batch and `--refresh` rebuilds completed 3D outputs.
-No sample, health, original-download or network-import checkpoint is replaced.
-`status`/`check` report `pending_3d_activities` separately from source-import status.
-A missing database is not created by `rebuild-3d`.
-
-Back up an existing database before its first upgrade, and do not run old and new
-writers together. Older writers reject schema 3. In particular, keep any active
-historical fetch pinned to its original environment until it exits. Schema-1
-prototypes lack reliable stored segment identities: migration retains the previous
-`segment_index=0` fallback; rebuilding cannot invent boundaries absent from the
-stored observations. Recover full original segmentation from retained archives
-before relying on those prototype tracks. Unknown schema versions and unrelated
-SQLite/GeoPackage files are rejected before modification.
-
-`--all-data` additionally archives performed workouts under the `activity_workouts`
-dataset, using activity ID as request key, and fetches all documented detailed daily
-endpoints. Daily arrays remain in the original JSON; scalar numeric leaves become
-metrics. `weight_entries` retains separate same-day measurements using their source
-timestamp/identity rather than overwriting all measurements with the last one. Raw
-weight units remain as returned by each endpoint. See [endpoint coverage](api-coverage.md).
+Normal sync creates both 2D and 3D layers and refreshes them together. This early
+alpha does not maintain automatic upgrades from prototype schemas. For a fresh
+import after a schema change, select a new export directory with `--root`; retain
+the old export separately. Never run different writers against the same database.
+Unrelated SQLite/GeoPackage files are also rejected before modification.

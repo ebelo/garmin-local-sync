@@ -47,7 +47,6 @@ garmin-sync sync              # activities and health summaries
 garmin-sync sync --all-data   # all supported read endpoints, including daily details
 garmin-sync status
 garmin-sync check
-garmin-sync rebuild-3d        # offline 3D upgrade from existing samples
 ```
 
 Run again to resume or update. Data defaults to
