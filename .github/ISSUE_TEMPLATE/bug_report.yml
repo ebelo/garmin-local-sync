@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a reproducible problem using synthetic or redacted inputs.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never attach credentials, real health/location data, original activity files or a personal GeoPackage.
+        For vulnerabilities, follow SECURITY.md rather than opening a public report.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Package version or commit, OS, Python version and GDAL version.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Command and steps using synthetic inputs. Remove personal paths and account details.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behaviour
+      description: Include the exit code and a short redacted error excerpt if useful.
+    validations:
+      required: true

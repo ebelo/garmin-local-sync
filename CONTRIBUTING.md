@@ -56,9 +56,33 @@ system-managed GDAL. It records the runtime versions actually installed for the 
 it does not certify every version allowed by dependency ranges or the whole host.
 Upgrade OS/GDAL packages through the platform package manager separately.
 
-QFit's QGIS/Qt runtime matrix does not apply to this application-neutral tool. Hosted
-SonarCloud analysis is not run by this local gate and is not configured until a hosted
-repository/service setup exists. Ruff replaces overlapping Flake8/import/style checks.
+Ruff replaces overlapping Flake8/import/style checks. No desktop GIS runtime is
+required by the project.
+
+## Optional SonarQube analysis
+
+The repository includes credential-free `sonar-project.properties`. After running
+the quality gate to generate fresh `reports/quality/coverage.xml`, use an existing
+SonarQube Community Build server or another compatible Sonar deployment:
+
+```bash
+export SONAR_HOST_URL=http://127.0.0.1:9000
+# Supply SONAR_TOKEN privately through your environment, never a committed file.
+sonar-scanner -Dsonar.qualitygate.wait=true
+```
+
+Create the matching project on that server first. Sonar is optional and separate
+from the default CI gate; a local server does not require GitHub or SonarCloud.
+Resolve findings rather than weakening the quality profile or adding broad exclusions.
+
+## Making a change
+
+For a substantial feature or architectural change, discuss the use case in an issue
+first. Fork the repository, create a focused branch, and keep changes small enough
+to review. Add meaningful synthetic regression coverage for behaviour changes,
+update the relevant docs/changelog, run the applicable quality checks, and open a
+pull request describing the change and evidence. Keep discussion constructive and
+respectful. Report vulnerabilities through [SECURITY.md](SECURITY.md), not a public issue.
 
 ## Useful contributions
 

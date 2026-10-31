@@ -7,6 +7,8 @@
 - Preserve source observations, schema version 2, retry/checkpoint semantics and
   existing CLI/compatibility APIs; add focused retry and backfill regression tests.
 - Improve test assertion diagnostics and isolate exception-under-test calls.
+- Add a concise README, detailed usage guide, security-reporting policy and GitHub
+  contribution templates; document portable optional SonarQube scanning.
 
 ## 0.2.1 — unreleased
 

@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest a focused improvement to local export or analytics.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the local-data use case without sharing personal records.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour and alternatives
+      description: Explain how it fits the Garmin-to-GeoPackage scope; a particular GIS application is not required.
+    validations:
+      required: true
