@@ -13,7 +13,7 @@ from ..config import SCHEMA_VERSION
 from ..domain.health import normalize_response
 from ..domain.models import ActivityState, DateWindow, Message, Sample
 from ..util import dumps, now
-from .geometry import activity_geometries
+from .geometry import ELEVATION_METADATA, SPATIAL_LAYERS, activity_geometries, activity_track_3d
 from .mapping import sample_to_row, summary_from_payload
 
 ogr.UseExceptions()
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS activities(
  training_load REAL, aerobic_training_effect REAL, anaerobic_training_effect REAL,
  start_latitude REAL, start_longitude REAL, summary_json TEXT NOT NULL,
  detail_json TEXT, fetched_at TEXT NOT NULL, samples_synced_at TEXT,
- sample_count INTEGER, gps_point_count INTEGER, source_format TEXT);
+ sample_count INTEGER, gps_point_count INTEGER, source_format TEXT, geometry_3d_synced_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_activities_date ON activities(start_time_local);
 CREATE TABLE IF NOT EXISTS activity_samples(
  fid INTEGER PRIMARY KEY,
@@ -92,10 +92,17 @@ class GeoPackageRepository:
         version = None
         if existing or read_only:
             version = self._open_existing()
+            self.schema_version = version
             if read_only:
                 return
             self.db.close()
-        self._initialize(version, existing)
+        try:
+            self._initialize(version, existing)
+        except BaseException:
+            connection = getattr(self, "db", None)
+            if connection is not None:
+                connection.close()
+            raise
 
     def _open_existing(self):
         if not self.path.exists():
@@ -107,7 +114,7 @@ class GeoPackageRepository:
             if self.db.execute("PRAGMA application_id").fetchone()[0] != 0x47504B47:
                 raise RuntimeError("Not a GeoPackage; refusing to modify this file")
             versions = self.db.execute("SELECT version FROM schema_version").fetchall()
-            if len(versions) != 1 or versions[0][0] not in (1, SCHEMA_VERSION):
+            if len(versions) != 1 or versions[0][0] not in (1, 2, SCHEMA_VERSION):
                 raise RuntimeError("Unsupported database schema version")
             self.db.execute("SELECT activity_id,summary_json FROM activities LIMIT 0")
             return versions[0][0]
@@ -127,12 +134,9 @@ class GeoPackageRepository:
         self.db.executescript(SCHEMA)
         if version is None:
             self.db.execute("INSERT INTO schema_version VALUES(?)", (SCHEMA_VERSION,))
-        elif version == 1:
-            with self.db:
-                self.db.execute(
-                    "ALTER TABLE activity_samples ADD COLUMN segment_index INTEGER NOT NULL DEFAULT 0"
-                )
-                self.db.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
+        elif version < SCHEMA_VERSION:
+            self._migrate(version)
+        self.schema_version = SCHEMA_VERSION
         for name in [
             "activities",
             "activity_samples",
@@ -157,16 +161,51 @@ class GeoPackageRepository:
         srs = osr.SpatialReference()
         srs.ImportFromEPSG(4326)
         srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        for name, geom_type in [
-            ("activity_tracks", ogr.wkbMultiLineString),
-            ("activity_starts", ogr.wkbPoint),
-        ]:
-            layer = ds.CreateLayer(name, srs, geom_type, options=["SPATIAL_INDEX=YES"])
-            layer.CreateField(ogr.FieldDefn("activity_id", ogr.OFTInteger64))
-            layer.CreateField(ogr.FieldDefn("start_time", ogr.OFTString))
-            layer.CreateField(ogr.FieldDefn("activity_type", ogr.OFTString))
-            ds.ExecuteSQL(f'CREATE UNIQUE INDEX "idx_{name}_id" ON "{name}"(activity_id)')
+        for name, geom_type in SPATIAL_LAYERS:
+            self._create_layer(ds, name, geom_type, srs)
         ds = None
+
+    @staticmethod
+    def _create_layer(ds, name, geom_type, srs):
+        layer = ds.CreateLayer(name, srs, geom_type, options=["SPATIAL_INDEX=YES"])
+        layer.CreateField(ogr.FieldDefn("activity_id", ogr.OFTInteger64))
+        layer.CreateField(ogr.FieldDefn("start_time", ogr.OFTString))
+        layer.CreateField(ogr.FieldDefn("activity_type", ogr.OFTString))
+        ds.ExecuteSQL(f'CREATE UNIQUE INDEX "idx_{name}_id" ON "{name}"(activity_id)')
+        if name == "activity_tracks_3d":
+            layer.SetMetadata(ELEVATION_METADATA)
+
+    def _migrate(self, version):
+        # Attribute/layer steps are repeatable after interruption. Mark version last.
+        with self.db:
+            columns = {r[1] for r in self.db.execute("PRAGMA table_info(activity_samples)")}
+            if version == 1 and "segment_index" not in columns:
+                self.db.execute(
+                    "ALTER TABLE activity_samples ADD COLUMN segment_index INTEGER NOT NULL DEFAULT 0"
+                )
+            columns = {r[1] for r in self.db.execute("PRAGMA table_info(activities)")}
+            if "geometry_3d_synced_at" not in columns:
+                self.db.execute("ALTER TABLE activities ADD COLUMN geometry_3d_synced_at TEXT")
+        self._ensure_3d_layer()
+        with self.db:
+            self.db.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
+
+    def _ensure_3d_layer(self):
+        ds = ogr.Open(str(self.path), 1)
+        try:
+            layer = ds.GetLayerByName("activity_tracks_3d")
+            if layer is None:
+                srs = osr.SpatialReference()
+                srs.ImportFromEPSG(4326)
+                srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+                self._create_layer(ds, "activity_tracks_3d", ogr.wkbMultiLineString25D, srs)
+            else:
+                if layer.GetGeomType() != ogr.wkbMultiLineString25D:
+                    raise RuntimeError("Existing 3D layer has incompatible geometry")
+                layer.SetMetadata({**layer.GetMetadata(), **ELEVATION_METADATA})
+            layer = None
+        finally:
+            ds = None
 
     def close(self):
         if not self.read_only and self.db.total_changes:
@@ -258,6 +297,22 @@ class GeoPackageRepository:
         self.db.execute("DELETE FROM sync_errors WHERE task=?", (task,))
 
     def save_geometry(self, aid, samples):
+        track, first = activity_geometries(samples, fallback=self._start_coordinates(aid))
+        self._write_geometries(
+            aid,
+            {
+                "activity_tracks": track,
+                "activity_starts": first,
+                "activity_tracks_3d": activity_track_3d(samples),
+            },
+        )
+
+    def _start_coordinates(self, aid):
+        return self.db.execute(
+            "SELECT start_longitude,start_latitude FROM activities WHERE activity_id=?", (aid,)
+        ).fetchone()
+
+    def _write_geometries(self, aid, geometries):
         # OGR owns GeoPackage geometry encoding and spatial-index triggers.
         self.db.commit()
         ds = ogr.Open(str(self.path), 1)
@@ -267,8 +322,7 @@ class GeoPackageRepository:
                 "SELECT start_time_local,activity_type,start_longitude,start_latitude FROM activities WHERE activity_id=?",
                 (aid,),
             ).fetchone()
-            track, first = activity_geometries(samples, fallback=(info[2], info[3]))
-            for name, geometry in [("activity_tracks", track), ("activity_starts", first)]:
+            for name, geometry in geometries.items():
                 layer = ds.GetLayerByName(name)
                 layer.SetAttributeFilter(f"activity_id={int(aid)}")
                 fids = [f.GetFID() for f in layer]
@@ -295,7 +349,10 @@ class GeoPackageRepository:
         # Invalidate an old checkpoint before either connection commits a refresh.
         # A crash between geometry and attributes must remain visibly incomplete.
         with self.db:
-            self.db.execute("UPDATE activities SET samples_synced_at=NULL WHERE activity_id=?", (aid,))
+            self.db.execute(
+                "UPDATE activities SET samples_synced_at=NULL,geometry_3d_synced_at=NULL WHERE activity_id=?",
+                (aid,),
+            )
         self.save_geometry(aid, samples)
         with self.db:
             self.db.execute("DELETE FROM activity_samples WHERE activity_id=?", (aid,))
@@ -309,10 +366,19 @@ class GeoPackageRepository:
                 ((aid, m.index, m.message_type, dumps(m.raw)) for m in messages),
             )
             self.db.execute(
-                "UPDATE activities SET detail_json=?,samples_synced_at=?,sample_count=?,gps_point_count=?,source_format=? WHERE activity_id=?",
-                (dumps(detail), now(), len(samples), sum(s.latitude is not None for s in samples), fmt, aid),
+                "UPDATE activities SET detail_json=?,samples_synced_at=?,sample_count=?,gps_point_count=?,source_format=?,geometry_3d_synced_at=? WHERE activity_id=?",
+                (
+                    dumps(detail),
+                    now(),
+                    len(samples),
+                    sum(s.latitude is not None for s in samples),
+                    fmt,
+                    now(),
+                    aid,
+                ),
             )
             self.clear_error(f"activity:{aid}")
+            self.clear_error(f"geometry3d:{aid}")
 
     def response(self, dataset, key, data, start=None, end=None):
         with self.db:
@@ -363,6 +429,59 @@ class GeoPackageRepository:
             decoded.source_format,
         )
 
+    def pending_3d_count(self):
+        if self.schema_version < 3:
+            return None
+        return self.db.execute(
+            "SELECT count(*) FROM activities WHERE samples_synced_at IS NOT NULL "
+            "AND geometry_3d_synced_at IS NULL"
+        ).fetchone()[0]
+
+    def _stored_geographic_samples(self, aid):
+        rows = self.db.execute(
+            "SELECT sample_index,timestamp_utc,latitude,longitude,altitude_m,segment_index "
+            "FROM activity_samples WHERE activity_id=? ORDER BY sample_index",
+            (aid,),
+        )
+        return [
+            Sample(i, stamp, lat, lon, altitude, segment_index=segment)
+            for i, stamp, lat, lon, altitude, segment in rows
+        ]
+
+    def _rebuild_3d_activity(self, aid):
+        with self.db:
+            self.db.execute("UPDATE activities SET geometry_3d_synced_at=NULL WHERE activity_id=?", (aid,))
+        samples = self._stored_geographic_samples(aid)
+        self._write_geometries(aid, {"activity_tracks_3d": activity_track_3d(samples)})
+        with self.db:
+            self.db.execute("UPDATE activities SET geometry_3d_synced_at=? WHERE activity_id=?", (now(), aid))
+            self.clear_error(f"geometry3d:{aid}")
+
+    def rebuild_3d(self, limit=None, refresh=False):
+        query = "SELECT activity_id FROM activities WHERE samples_synced_at IS NOT NULL"
+        if not refresh:
+            query += " AND geometry_3d_synced_at IS NULL"
+        query += " ORDER BY start_time_local DESC,activity_id DESC"
+        parameters: tuple = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (limit,)
+        activities = self.db.execute(query, parameters).fetchall()
+        completed, failed = 0, 0
+        for (aid,) in activities:
+            try:
+                self._rebuild_3d_activity(aid)
+                completed += 1
+            except (RuntimeError, ValueError, sqlite3.DatabaseError) as error:
+                self.record_failure(f"geometry3d:{aid}", error)
+                failed += 1
+        return {
+            "activities_processed": completed,
+            "activities_failed": failed,
+            "pending_3d_activities": self.pending_3d_count(),
+            "tracks_3d": self.db.execute("SELECT count(*) FROM activity_tracks_3d").fetchone()[0],
+        }
+
     def earliest_activity_date(self):
         value = self.db.execute("SELECT min(start_time_local) FROM activities").fetchone()[0]
         return dt.date.fromisoformat(value[:10]) if value else None
@@ -411,7 +530,7 @@ class GeoPackageRepository:
 
 
 def status(store):
-    result: dict = {"database": str(store.path)}
+    result: dict = {"database": str(store.path), "schema_version": store.schema_version}
     for name in [
         "activities",
         "activity_samples",
@@ -422,6 +541,11 @@ def status(store):
     ]:
         # fixed table allowlist above.
         result[name] = store.db.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]  # nosec B608
+    if store.schema_version >= 3:
+        result["activity_tracks_3d"] = store.db.execute("SELECT count(*) FROM activity_tracks_3d").fetchone()[
+            0
+        ]
+    result["pending_3d_activities"] = store.pending_3d_count()
     result["activities_imported"] = store.db.execute(
         "SELECT count(*) FROM activities WHERE samples_synced_at IS NOT NULL"
     ).fetchone()[0]

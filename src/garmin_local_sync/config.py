@@ -9,4 +9,4 @@ TOKEN_PATH = "/personalapitoken-service/personal-api/personal-api-key/token"  # 
 DEFAULT_ROOT = Path.home() / ".local/share/garmin-local-sync"
 DEFAULT_KEY = Path.home() / ".config/garmin/connect-personal-api-key"
 UTC = dt.UTC
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3

@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from ..domain.geography import valid_altitude
 from ..domain.models import ActivitySummary, Sample
 from ..util import dumps
 
@@ -44,7 +45,7 @@ def sample_to_row(sample: Sample, activity_id: int):
         sample.timestamp_utc,
         sample.latitude,
         sample.longitude,
-        sample.altitude_m,
+        sample.altitude_m if valid_altitude(sample.altitude_m) else None,
         sample.distance_m,
         sample.speed_mps,
         sample.heart_rate_bpm,

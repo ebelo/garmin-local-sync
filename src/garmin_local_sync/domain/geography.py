@@ -24,7 +24,10 @@ def date_line_edge(previous: Coordinate, point: Coordinate) -> Coordinate:
     boundary = 180.0 if adjusted_lon > previous.longitude else -180.0
     fraction = (boundary - previous.longitude) / (adjusted_lon - previous.longitude)
     latitude = previous.latitude + fraction * (point.latitude - previous.latitude)
-    return Coordinate(boundary, latitude)
+    altitude = None
+    if previous.altitude_m is not None and point.altitude_m is not None:
+        altitude = (1 - fraction) * previous.altitude_m + fraction * point.altitude_m
+    return Coordinate(boundary, latitude, altitude)
 
 
 class TrackBuilder:
@@ -48,7 +51,7 @@ class TrackBuilder:
             if self.points[-1] != edge:
                 self.points.append(edge)
             self.finish()
-            self.points = [Coordinate(-edge.longitude, edge.latitude)]
+            self.points = [Coordinate(-edge.longitude, edge.latitude, edge.altitude_m)]
         if not self.points or self.points[-1] != point:
             self.points.append(point)
 
@@ -59,7 +62,13 @@ def starts_new_segment(sample: Sample, previous_segment, previous_time):
     )
 
 
-def build_geography(samples: Iterable[Sample], fallback: Coordinate | None = None) -> ActivityGeography:
+def valid_altitude(value):
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def build_geography(
+    samples: Iterable[Sample], fallback: Coordinate | None = None, *, with_elevation: bool = False
+) -> ActivityGeography:
     builder = TrackBuilder()
     previous_segment = None
     previous_time = None
@@ -73,8 +82,16 @@ def build_geography(samples: Iterable[Sample], fallback: Coordinate | None = Non
         if lat is None or lon is None or not valid_coords(lat, lon):
             builder.finish()
             continue
-        builder.add(Coordinate(lon, lat))
+        if with_elevation and not valid_altitude(sample.altitude_m):
+            builder.finish()
+            continue
+        builder.add(Coordinate(lon, lat, sample.altitude_m if with_elevation else None))
     builder.finish()
-    if builder.first is None and fallback and valid_coords(fallback.latitude, fallback.longitude):
+    if (
+        not with_elevation
+        and builder.first is None
+        and fallback
+        and valid_coords(fallback.latitude, fallback.longitude)
+    ):
         builder.first = fallback
     return ActivityGeography(tuple(builder.tracks), builder.first)

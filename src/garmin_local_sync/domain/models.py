@@ -100,6 +100,7 @@ class WellnessRecord:
 class Coordinate:
     longitude: float
     latitude: float
+    altitude_m: float | None = None
 
 
 @dataclass(frozen=True)

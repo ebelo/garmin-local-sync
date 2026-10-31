@@ -3,7 +3,7 @@
 - This is a Garmin Personal API -> GeoPackage pipeline, independent of any particular
   desktop GIS application. Geographic fidelity and useful local analytics are core.
 - Use GDAL/OGR for geometry reads/writes and spatial-index maintenance. Plain SQLite
-  is for nonspatial attributes. Longitude is X; latitude is Y; CRS is EPSG:4326.
+  is for nonspatial attributes. Longitude is X; latitude is Y; horizontal CRS is EPSG:4326.
 - Retain original samples, elevations, timestamps, segment boundaries, and source
   payloads. Never fabricate a zero elevation or bridge gaps/date-line discontinuities.
 - Never commit credentials, token caches, original personal activity files, database
@@ -11,6 +11,10 @@
 - FIT exercise-category candidates are not verified corrected exercise names. Avoid
   strength claims based on ambiguous movement labels or cross-equipment loads.
 - Preserve idempotence, checkpoint honesty, bounded retries, and one-writer locking.
+- Preserve complete 2D routes and derive 3D tracks from finite recorded heights.
+  Missing Z splits segments; vertical movement at repeated XY must remain. Use
+  descriptive EPSG:5714 metadata with its assumed/not-source-certified role and no
+  height transformation. Validate XYZ directly; GEOS validity ignores Z.
 - Keep typed Sample/Message values through decoding and geometry; positional rows
   and JSON encoding belong only at the SQL persistence boundary.
 - Keep dependency direction inward: domain uses only the standard library;

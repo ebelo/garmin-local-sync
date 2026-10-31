@@ -234,3 +234,25 @@ lightweight [hexagonal architecture](architecture.md); dependencies point inward
 
 MIT licensed; see [LICENSE](../LICENSE). Garmin is a trademark of its owner. This
 project is independent and is not endorsed by Garmin.
+
+## Offline 3D track upgrade
+
+Version 0.5.0 adds schema-3 derived 3D tracks. To upgrade an existing export after
+its current writer has stopped, back it up and run:
+
+```sh
+garmin-sync rebuild-3d --root /path/to/private/export
+garmin-sync check --root /path/to/private/export
+```
+
+This uses stored samples only: no Garmin credentials, refetches or source-record
+changes. It preserves complete 2D routes. Resume by repeating the command; use
+`--activity-limit N` for batches or `--refresh` to regenerate completed 3D outputs.
+Source imports must be complete before their derived 3D track is processed.
+`pending_3d_activities` counts unprocessed completed imports; a processed activity
+can legitimately have no 3D line if elevation or enough valid observations are absent.
+
+Read-only `status` and `check` still accept older schemas without migrating them.
+See [the 3D data and migration contract](schema.md#elevation-aware-tracks), including
+why EPSG:5714 is descriptive, missing heights split tracks and vertical lines need
+XYZ-aware validation. Do not use an old writer after upgrading to schema 3.

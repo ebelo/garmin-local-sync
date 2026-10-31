@@ -24,7 +24,9 @@ from .util import atomic_write, dumps, now
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["sync", "status", "check"], nargs="?", default="sync")
+    parser.add_argument(
+        "command", choices=["sync", "status", "check", "rebuild-3d"], nargs="?", default="sync"
+    )
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Private archive/data directory")
     parser.add_argument("--database", type=Path, help="GeoPackage path; default ROOT/garmin.gpkg")
     parser.add_argument("--api-key-file", type=Path, default=DEFAULT_KEY)
@@ -32,7 +34,7 @@ def parse_args(argv=None):
         "--start", type=dt.date.fromisoformat, help="First health date; default earliest indexed activity"
     )
     parser.add_argument("--end", type=dt.date.fromisoformat, default=dt.date.today())
-    parser.add_argument("--activity-limit", type=int, help="Import only the latest N activities (smoke test)")
+    parser.add_argument("--activity-limit", type=int, help="Process only the latest N activities")
     parser.add_argument("--skip-activities", action="store_true")
     parser.add_argument("--skip-health", action="store_true")
     parser.add_argument(
@@ -104,6 +106,10 @@ def execute(args, root, store):
         report = check_store(store)
         print(json.dumps(report, indent=2))
         return 0 if report["valid"] else 1
+    if args.command == "rebuild-3d":
+        report = store.rebuild_3d(limit=args.activity_limit, refresh=args.refresh)
+        print(json.dumps(report, indent=2))
+        return 2 if report["activities_failed"] else 0
     api = Api(args.api_key_file, args.delay)
     api.authenticate()
     service = SyncService(
@@ -139,6 +145,8 @@ def run(argv=None):
     root = args.root.expanduser().resolve()
     read_only = args.command in ("status", "check")
     database = args.database.expanduser().resolve() if args.database else root / "garmin.gpkg"
+    if args.command == "rebuild-3d" and not database.exists():
+        raise FileNotFoundError("GeoPackage does not exist; rebuild-3d needs stored samples")
     if not read_only:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
     with database_lock(database, read_only):

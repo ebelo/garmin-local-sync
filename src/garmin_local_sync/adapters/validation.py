@@ -5,6 +5,8 @@ from itertools import pairwise
 
 from osgeo import ogr
 
+from .geometry import ELEVATION_METADATA, SPATIAL_LAYERS, activity_track_3d
+
 
 def check_attributes(db, errors):
     for table in (
@@ -44,7 +46,12 @@ def check_registration(db, layer, name, expected, errors):
     registration = db.execute(
         "SELECT geometry_type_name,srs_id,z,m FROM gpkg_geometry_columns WHERE table_name=?", (name,)
     ).fetchone()
-    wanted = ("MULTILINESTRING" if expected == ogr.wkbMultiLineString else "POINT", 4326, 0, 0)
+    wanted = (
+        "MULTILINESTRING" if ogr.GT_Flatten(expected) == ogr.wkbMultiLineString else "POINT",
+        4326,
+        int(ogr.GT_HasZ(expected)),
+        0,
+    )
     if registration != wanted:
         errors.append(f"{name}: invalid geometry/CRS/dimension registration")
     srs = layer.GetSpatialRef()
@@ -100,11 +107,69 @@ def check_track_segments(geom, label, errors):
             errors.append(f"{label}: unsplit date-line crossing")
 
 
+def valid_xyz_track(geom):
+    # GEOS validity is XY-only and incorrectly rejects purely vertical XYZ lines.
+    if ogr.GT_Flatten(geom.GetGeometryType()) != ogr.wkbMultiLineString:
+        return False
+    for line in geom:
+        points = line.GetPoints()
+        if len(set(points)) < 2:
+            return False
+        if any(len(p) != 3 or not all(math.isfinite(v) for v in p) for p in points):
+            return False
+    return True
+
+
+def valid_feature_geometry(geom, expected):
+    if geom is None or geom.IsEmpty():
+        return False
+    return valid_xyz_track(geom) if ogr.GT_HasZ(expected) else geom.IsValid()
+
+
+def check_elevation_metadata(db, layer, errors):
+    metadata = layer.GetMetadata()
+    if any(metadata.get(key) != value for key, value in ELEVATION_METADATA.items()):
+        errors.append("activity_tracks_3d: missing or inconsistent elevation-reference metadata")
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {"gpkg_metadata", "gpkg_metadata_reference"} <= tables:
+        errors.append("activity_tracks_3d: missing standard GeoPackage metadata tables")
+    elif not db.execute(
+        "SELECT 1 FROM gpkg_metadata_reference WHERE reference_scope='table' AND table_name=?",
+        ("activity_tracks_3d",),
+    ).fetchone():
+        errors.append("activity_tracks_3d: missing table-scoped metadata reference")
+
+
+def geometry_bytes(geometry):
+    return bytes(geometry.ExportToIsoWkb()) if geometry is not None else None
+
+
+def check_elevation_source(store, layer, errors):
+    stale = store.db.execute(
+        "SELECT count(*) FROM activities WHERE geometry_3d_synced_at IS NOT NULL "
+        "AND samples_synced_at IS NULL"
+    ).fetchone()[0]
+    if stale:
+        errors.append("3D completion checkpoints exist for incomplete source imports")
+    activities = store.db.execute(
+        "SELECT activity_id FROM activities WHERE geometry_3d_synced_at IS NOT NULL"
+    )
+    for (aid,) in activities:
+        expected = activity_track_3d(store._stored_geographic_samples(aid))
+        layer.SetAttributeFilter(f"activity_id={int(aid)}")
+        feature = layer.GetNextFeature()
+        observed = feature.GetGeometryRef() if feature else None
+        if geometry_bytes(expected) != geometry_bytes(observed):
+            errors.append(f"activity_tracks_3d activity {aid}: geometry differs from source samples")
+    layer.SetAttributeFilter(None)
+    layer.ResetReading()
+
+
 def check_features(db, layer, name, expected, index, errors):
     for feature in layer:
         geom = feature.GetGeometryRef()
         label = f"{name} feature {feature.GetFID()}"
-        if geom is None or geom.IsEmpty() or not geom.IsValid():
+        if not valid_feature_geometry(geom, expected):
             errors.append(f"{label}: missing, empty, or invalid geometry")
             continue
         if geom.GetGeometryType() != expected:
@@ -114,7 +179,7 @@ def check_features(db, layer, name, expected, index, errors):
             errors.append(f"{label}: geometry outside valid longitude/latitude bounds")
         if index:
             check_index_envelope(db, index, feature, envelope, label, errors)
-        if expected == ogr.wkbMultiLineString:
+        if ogr.GT_Flatten(expected) == ogr.wkbMultiLineString:
             check_track_segments(geom, label, errors)
 
 
@@ -132,7 +197,9 @@ def check_store(store):
     ds = ogr.Open(str(store.path), 0)
     if ds is None:
         raise RuntimeError("GDAL could not open the GeoPackage")
-    for name, expected in [("activity_tracks", ogr.wkbMultiLineString), ("activity_starts", ogr.wkbPoint)]:
+    for name, expected in SPATIAL_LAYERS:
+        if name == "activity_tracks_3d" and store.schema_version < 3:
+            continue
         layer = ds.GetLayerByName(name)
         if layer is None:
             errors.append(f"{name}: missing spatial layer")
@@ -141,9 +208,14 @@ def check_store(store):
         check_registration(db, layer, name, expected, errors)
         index = spatial_index(db, layer, name, errors)
         check_features(db, layer, name, expected, index, errors)
+        if name == "activity_tracks_3d":
+            check_elevation_metadata(db, layer, errors)
+            check_elevation_source(store, layer, errors)
     ds = None
     return {
         "valid": not errors,
+        "schema_version": store.schema_version,
+        "pending_3d_activities": store.pending_3d_count(),
         "integrity": integrity[0][0],
         "foreign_key_errors": len(foreign_keys),
         "geographic_layers": layers,

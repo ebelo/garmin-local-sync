@@ -1,8 +1,8 @@
 # Storage and geography
 
 The output is a **GeoPackage 1.3** (SQLite application ID `GPKG`) with the required
-GeoPackage metadata tables, two registered feature layers, registered attribute
-tables, and R-tree indexes. The application's current schema version is **2**.
+GeoPackage metadata tables, three registered feature layers, registered attribute
+tables, and R-tree indexes. The application's current schema version is **3**.
 
 ## Spatial layers
 
@@ -10,6 +10,7 @@ tables, and R-tree indexes. The application's current schema version is **2**.
 | --- | --- | --- | --- |
 | `activity_tracks` | 2D `MultiLineString` | EPSG:4326 | `activity_id` -> `activities.activity_id` |
 | `activity_starts` | 2D `Point` | EPSG:4326 | `activity_id` -> `activities.activity_id` |
+| `activity_tracks_3d` | `MultiLineString Z` (mandatory Z, no M) | EPSG:4326 horizontal; descriptive EPSG:5714 vertical metadata | `activity_id` -> `activities.activity_id` |
 
 Each layer has an integer feature ID, unique `activity_id`, `start_time` (activity-local
 time), and `activity_type`. The activity link is validated by `garmin-sync check`;
@@ -31,9 +32,48 @@ opposite +/-180-degree boundaries. Boundary latitude is linearly interpolated in
 longitude/latitude coordinate space. These are derived geometry vertices, not new
 sensor observations. This prevents a nearly 360-degree edge across the globe.
 
-Elevation is deliberately separate from 2D geometry. Missing elevation is NULL,
-never an invented zero. No vertical datum or geoid correction is inferred. The
-original altitude value and other source fields remain available in sample JSON.
+### Elevation-aware tracks
+
+`activity_tracks` remains the complete horizontal representation; `activity_tracks_3d`
+is derived independently from the same observations. Recorded `altitude_m` supplies
+Z in metres without a geoid correction or other vertical transformation. Missing,
+non-numeric or non-finite elevation breaks a 3D segment; it never becomes an invented
+zero and gaps are not interpolated. Original values and diagnostics remain in raw
+sample JSON. Isolated observations do not become degenerate line strings.
+
+Repeated XYZ vertices are unnecessary duplicates, but a change in Z at the same XY
+is preserved, including purely vertical segments. Original segment boundaries,
+missing GPS and backwards times also split 3D tracks. At date-line boundaries only,
+Z is linearly interpolated between the two source heights for derived geometry
+vertices. Such boundary vertices are not added to the sample table.
+
+The 3D layer carries table-scoped metadata through the standard `gpkg_metadata` /
+`gpkg_metadata_reference` extension, written and read by GDAL:
+
+| Metadata | Meaning |
+|---|---|
+| Horizontal CRS | EPSG:4326; longitude=X, latitude=Y |
+| Elevation unit | Metres |
+| Descriptive vertical CRS | **EPSG:5714, MSL height** |
+| Assignment basis | Assumed/descriptive MSL interpretation, **not source-certified** |
+| Exact source vertical datum | Not identified by the source fields |
+| Vertical transformation | None; recorded heights are preserved |
+| Provenance | `activity_samples.altitude_m`, raw sample JSON and retained originals |
+
+Garmin describes watch elevation as above/below sea level. That does not identify a
+particular geoid model for every imported file. EPSG:5714 is a descriptive reference,
+not a claim that the producer certified a vertical datum or that heights were
+transformed. Do not relabel the geometry EPSG:4979 (WGS84 ellipsoidal height).
+FIT uses `enhanced_altitude` when present, otherwise `altitude`; GPX `ele` and TCX
+`AltitudeMeters` are normalized into the same sample column. GPS versus barometric
+or corrected measurement source is not guessed.
+
+GeoPackage R-trees index XY envelopes, not heights. `garmin-sync check` validates
+3D dimensions, finite/distinct XYZ vertices, date-line segmentation, metadata,
+spatial indexes and source-to-geometry equality for completed 3D activities. Purely
+vertical lines are validated in XYZ: GEOS `IsValid` alone is XY-only and may reject
+them despite their valid 3D structure. Independent GeoPackage conformance is tested.
+
 
 ## Attribute tables
 
@@ -103,17 +143,46 @@ activity remains incomplete and is replaced on the next run. Previous sample row
 can remain until that replacement succeeds. For analyses requiring a fully imported
 snapshot, join to `activities` and require `samples_synced_at IS NOT NULL`.
 
+3D completion additionally requires `geometry_3d_synced_at IS NOT NULL`. This is a
+processing checkpoint, not a promise that every sample has elevation or that a
+3D feature exists: manual activities, isolated points and missing-Z paths can
+legitimately have no 3D line. Import refreshes invalidate both checkpoints before
+geometry updates and set them only after geometry and attributes succeed.
+
 Health checkpoints are committed only after successful responses, including HTTP
 204 (no data). Overlapping date windows replace normalized records in that interval;
 full request responses remain archived by request key. Failed windows are retried.
 
-Experimental schema-1 databases from the original prototype are recognized. A sync
-write-open adds `segment_index` with default zero and changes the schema version to
-2. Read-only `status` and `check` do not migrate or modify a database. Unknown schema
-versions and unrelated SQLite/GeoPackage files are rejected before modification.
-Back up a prototype database before its first upgrade. Existing old geometries are
-not silently rewritten; use `sync --refresh` to re-decode their original archives
-with the new segment/date-line rules. Do not run old and new writers together.
+### Schema migration and offline rebuilding
+
+Schema-1 and schema-2 databases remain readable without modification. A write-open
+migrates to schema **3**, adding the derived layer, metadata and nullable per-activity
+3D checkpoints. The version marker changes only after migration steps complete;
+an interrupted upgrade can be retried. Existing source rows and 2D features are not
+rewritten, and historical 3D checkpoints remain pending until built.
+
+Build those features entirely from stored samples, without API credentials or
+network requests:
+
+```sh
+garmin-sync rebuild-3d --root /path/to/private/export
+```
+
+The command takes the same one-writer lock as sync, processes only completed source
+imports and checkpoints each activity. Run again to resume or retry failures;
+`--activity-limit N` bounds a batch and `--refresh` rebuilds completed 3D outputs.
+No sample, health, original-download or network-import checkpoint is replaced.
+`status`/`check` report `pending_3d_activities` separately from source-import status.
+A missing database is not created by `rebuild-3d`.
+
+Back up an existing database before its first upgrade, and do not run old and new
+writers together. Older writers reject schema 3. In particular, keep any active
+historical fetch pinned to its original environment until it exits. Schema-1
+prototypes lack reliable stored segment identities: migration retains the previous
+`segment_index=0` fallback; rebuilding cannot invent boundaries absent from the
+stored observations. Recover full original segmentation from retained archives
+before relying on those prototype tracks. Unknown schema versions and unrelated
+SQLite/GeoPackage files are rejected before modification.
 
 `--all-data` additionally archives performed workouts under the `activity_workouts`
 dataset, using activity ID as request key, and fetches all documented detailed daily

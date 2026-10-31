@@ -10,8 +10,8 @@ cloud database or particular GIS application.
 
 - Activity summaries and available original FIT/GPX/TCX files.
 - EPSG:4326 tracks and start points with spatial indexes: longitude=X, latitude=Y.
-- Segmented 2D tracks linked to timestamped samples; elevation stays in nullable
-  attributes rather than becoming invented geometry heights.
+- Complete 2D routes plus derived 3D tracks using recorded elevation in metres;
+  missing heights stay NULL in samples and split 3D segments rather than becoming zero.
 - Health summaries and optional detailed daily data, with complete raw JSON retained.
 - Resumable, incremental imports, bounded retries and visible incomplete items.
 
@@ -47,6 +47,7 @@ garmin-sync sync              # activities and health summaries
 garmin-sync sync --all-data   # all supported read endpoints, including daily details
 garmin-sync status
 garmin-sync check
+garmin-sync rebuild-3d        # offline 3D upgrade from existing samples
 ```
 
 Run again to resume or update. Data defaults to
