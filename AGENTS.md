@@ -11,6 +11,12 @@
 - FIT exercise-category candidates are not verified corrected exercise names. Avoid
   strength claims based on ambiguous movement labels or cross-equipment loads.
 - Preserve idempotence, checkpoint honesty, bounded retries, and one-writer locking.
+- Keep dependency direction inward: domain uses only the standard library;
+  application imports domain and its own ports, never adapters or compatibility
+  facades. HTTP paths, SQL, filesystem operations and GDAL objects belong to adapters.
+- Add workflows through `application.sync.SyncService` and the ports; keep legacy root
+  modules as compatibility facades, not a second implementation. Test core policy
+  with in-memory ports and adapters with integration/geography tests.
 - Run `ruff check .`, `ruff format --check .`, and `pytest` in the project environment.
   Geography changes require a synthetic OGR round-trip and conformance validation.
 - Build and smoke-test the wheel when packaging or entry points change.

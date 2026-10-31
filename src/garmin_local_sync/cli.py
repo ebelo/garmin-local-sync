@@ -10,12 +10,17 @@ import os
 import sys
 from pathlib import Path
 
-from .api import Api
+from .adapters.decoding import OriginalActivityDecoder
+from .adapters.filesystem import FileArchiveStore
+from .adapters.garmin import GarminSource
+from .adapters.geopackage import GeoPackageRepository as Store
+from .adapters.geopackage import status
+from .adapters.http import Api
+from .adapters.validation import check_store
+from .application.sync import SyncService
 from .config import DEFAULT_KEY, DEFAULT_ROOT
-from .storage import Store, status
-from .sync import sync_activities, sync_activity_list, sync_activity_workouts, sync_wellness
+from .domain.models import SyncOptions
 from .util import atomic_write, dumps, now
-from .validation import check_store
 
 
 def run(argv=None):
@@ -68,7 +73,7 @@ def run(argv=None):
     if args.all_data and args.datasets:
         parser.error("--all-data cannot be combined with a dataset subset")
     if args.datasets:
-        from .datasets import DETAIL_DATASETS, RANGE_DATASETS
+        from .domain.datasets import DETAIL_DATASETS, RANGE_DATASETS
 
         unknown = set(args.datasets.split(",")) - RANGE_DATASETS.keys() - DETAIL_DATASETS.keys()
         if unknown:
@@ -102,36 +107,28 @@ def run(argv=None):
                 return 0 if report["valid"] else 1
             api = Api(args.api_key_file, args.delay)
             api.authenticate()
-            if not args.skip_activities:
-                sync_activity_list(api, store, args.activity_limit, include_children=args.all_data)
-            if not args.skip_health:
-                earliest = store.db.execute("SELECT min(start_time_local) FROM activities").fetchone()[0]
-                start = args.start or (
-                    dt.date.fromisoformat(earliest[:10]) if earliest else args.end - dt.timedelta(days=90)
+            service = SyncService(
+                GarminSource(api),
+                store,
+                FileArchiveStore(root),
+                OriginalActivityDecoder(),
+                progress=lambda message: print(message, flush=True),
+            )
+            report = service.run(
+                SyncOptions(
+                    end=args.end,
+                    start=args.start,
+                    activity_limit=args.activity_limit,
+                    skip_activities=args.skip_activities,
+                    skip_health=args.skip_health,
+                    all_data=args.all_data,
+                    activity_workouts=args.activity_workouts,
+                    daily_details=args.daily_details,
+                    datasets=args.datasets,
+                    refresh_days=args.refresh_days,
+                    refresh=args.refresh,
                 )
-                print(f"Health date range: {start} through {args.end}", flush=True)
-                for name, path in [
-                    ("profile", "/userprofile-service/userprofile/settings"),
-                    ("heart_rate_zones", "/biometric-service/heartRateZones/v2"),
-                ]:
-                    data = api.get(path)
-                    store.response(name, "current", data)
-                sync_wellness(
-                    api,
-                    store,
-                    start,
-                    args.end,
-                    args.refresh_days,
-                    args.refresh,
-                    args.daily_details or args.all_data,
-                    args.datasets,
-                    discover_start=args.start is None,
-                )
-            if not args.skip_activities:
-                sync_activities(api, store, root, args.refresh_days, args.activity_limit, args.refresh)
-                if args.activity_workouts or args.all_data:
-                    sync_activity_workouts(api, store, args.refresh_days, args.activity_limit, args.refresh)
-            report = status(store)
+            )
             atomic_write(root / "last-sync.json", dumps({"finished_at": now(), **report}).encode())
             print(json.dumps(report, indent=2), flush=True)
             return 2 if report["sync_errors"] else 0

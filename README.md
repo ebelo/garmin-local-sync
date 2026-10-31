@@ -222,6 +222,11 @@ not the same as a completed history import. Re-run to resume incomplete work.
 
 ## Development
 
+The package is a lightweight **hexagonal monolith**: domain rules and application
+use cases depend on explicit ports, implemented by Garmin HTTP, GeoPackage/GDAL,
+filesystem and original-file decoding adapters. CLI and backfill entry points wire
+the application. See [architecture and dependency rules](docs/architecture.md).
+
 ```bash
 python -m pip install -e '.[dev]'
 ruff check .

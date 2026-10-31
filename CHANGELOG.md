@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — unreleased
+
+- Refactor into a lightweight hexagonal monolith with explicit source, repository,
+  archive, decoder and progress ports and a `SyncService` application entry point.
+- Introduce typed domain activities, observations, messages and date windows.
+- Extract pure geography and health-normalization rules; GDAL encoding, SQL, HTTP,
+  filesystem and FIT/XML dependencies now live in infrastructure adapters.
+- Preserve CLI options, schema version 2 and legacy import facades.
+- Add executable dependency rules and infrastructure-free application tests.
+
 ## 0.1.1 — unreleased
 
 - Add `--all-data` coverage for all 26 documented GET operations, including daily
