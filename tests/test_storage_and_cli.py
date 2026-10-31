@@ -72,7 +72,7 @@ def test_legacy_schema_is_migrated_only_on_a_write_open(tmp_path):
     store.close()
     assert digest(path) == before
     store = GeoPackageRepository(path)
-    assert store.db.execute("SELECT version FROM schema_version").fetchone()[0] == 2
+    assert store.db.execute("SELECT version FROM schema_version").fetchone()[0] == 3
     assert store.db.execute("SELECT count(*) FROM activity_samples").fetchone()[0] == 8
     assert store.db.execute("SELECT DISTINCT segment_index FROM activity_samples").fetchall() == [(0,)]
     store.close()
@@ -87,6 +87,10 @@ def test_refresh_failure_invalidates_the_old_completion_checkpoint(tmp_path):
         store.save_activity(1001, {}, [row, row], [], "synthetic")
     assert (
         store.db.execute("SELECT samples_synced_at FROM activities WHERE activity_id=1001").fetchone()[0]
+        is None
+    )
+    assert (
+        store.db.execute("SELECT geometry_3d_synced_at FROM activities WHERE activity_id=1001").fetchone()[0]
         is None
     )
     assert store.db.execute("SELECT count(*) FROM activity_samples WHERE activity_id=1001").fetchone()[0] == 4

@@ -85,7 +85,9 @@ the responsibility of driving adapters; library callers must preserve that contr
 
 ## Entry points and Python imports
 
-The CLI flags, original archive layout and application schema **2** are unchanged.
+The CLI flags and original archive layout are retained. Version **0.5.0** adds
+schema **3** for derived 3D tracks; legacy source tables and horizontal features
+are preserved. See the [migration and rebuild contract](schema.md#schema-migration-and-offline-rebuilding).
 Use the installed CLI for normal operation. Python integrations use the explicit
 layers; library callers compose adapters with `SyncService` and preserve locking
 and resource lifetimes as described above.

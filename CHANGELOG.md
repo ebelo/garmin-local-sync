@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 — 2026-10-31
+
+- Add `activity_tracks_3d` as a derived MultiLineString Z layer while retaining
+  complete 2D tracks and authoritative timestamped observations. Preserve recorded
+  heights, vertical movement, missing-Z gaps, original segments and date-line splits.
+- Store standard layer-scoped elevation metadata: metres, descriptive EPSG:5714 MSL
+  height (assumed, not source-certified), source provenance and no transformation.
+- Introduce schema 3 and resumable offline `rebuild-3d`, with per-activity derived
+  checkpoints. Schema-1/2 reads stay nonmutating; write migration leaves historical
+  source rows and 2D features intact. Existing source-import checkpoints are retained.
+- Validate 3D dimensions, metadata, XYZ structure, spatial indexes and equality to
+  stored samples; add migration/retry, vertical-line and source-fidelity regressions.
+
 ## 0.4.0 — 2026-10-31
 
 First tagged alpha release, bringing the development milestones below together.
@@ -93,6 +106,6 @@ Initial alpha release candidate:
 - Read-only status/geography/integrity checks and a detached one-off backfill runner.
 - Synthetic example generator and offline tests, including independent GDAL validation.
 
-The internal application schema is version 2. Experimental prototype schema-1
-databases migrate on sync write-open; historical geometry needs `--refresh` to be
-regenerated. See [schema and migration notes](docs/schema.md).
+The current application schema is version 3. Legacy schema-1/2 databases remain
+readable and migrate only on a write-open; derived 3D geometry can be built offline.
+See [schema and migration notes](docs/schema.md).
