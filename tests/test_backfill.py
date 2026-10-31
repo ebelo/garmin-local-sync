@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import sys
@@ -85,3 +86,15 @@ def test_main_status_without_report_is_readable(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["backfill", "status", "--root", str(tmp_path)])
     assert backfill.main() == 0
     assert "No detached backfill" in capsys.readouterr().out
+
+
+def test_start_with_existing_worker_lock_is_successful_without_spawning(tmp_path, monkeypatch, capsys):
+    def unexpected_spawn(*args, **kwargs):
+        raise AssertionError("An active worker must not be duplicated")
+
+    monkeypatch.setattr(backfill.subprocess, "Popen", unexpected_spawn)
+    monkeypatch.setattr(sys, "argv", ["backfill", "start", "--root", str(tmp_path)])
+    with (tmp_path / "backfill.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert backfill.main() == 0
+    assert "already running" in capsys.readouterr().out

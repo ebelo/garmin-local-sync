@@ -127,7 +127,8 @@ def main():
     if args.command == "status":
         print_status(report_path)
         return 0
-    return start_detached(args, root, log_path, report_path)
+    start_detached(args, root, log_path, report_path)
+    return 0
 
 
 def print_status(report_path):
@@ -154,7 +155,7 @@ def start_detached(args, root, log_path, report_path):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             print("A historical backfill is already running")
-            return 0
+            return
     with log_path.open("a") as log:
         os.chmod(log_path, 0o600)
         # fixed interpreter/module; options passed as argv, shell=False.
@@ -181,7 +182,6 @@ def start_detached(args, root, log_path, report_path):
             close_fds=True,
         )
     print(f"Detached backfill started (PID {child.pid}). Log: {log_path}; report: {report_path}")
-    return 0
 
 
 if __name__ == "__main__":
