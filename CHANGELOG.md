@@ -1,6 +1,27 @@
 # Changelog
 
-## 0.3.0 — unreleased
+## 0.4.0 — 2026-10-31
+
+First tagged alpha release, bringing the development milestones below together.
+
+- Keep typed `Sample` and `Message` values from FIT/GPX/TCX decoding through
+  application workflows and geographic processing. Convert to positional SQL
+  rows and encode raw JSON only at the persistence boundary.
+- **Breaking low-level Python helpers:** replace `sample_row` with
+  `sample_from_values`; parser helpers no longer accept an activity ID, and
+  `parse_archive` returns `DecodedActivity`. See the
+  [import and helper migration guide](docs/architecture.md#entry-points-and-python-imports).
+- Preserve the CLI, schema version 2, original archives, timestamp/coordinate/segment
+  rules and persisted source payloads. Add native-payload and multi-FIT regressions.
+- Include SHA-pinned Node 24 CI, weekly action updates, duplicate-run prevention,
+  single-source version metadata and removal of the old root import shims.
+
+## Development milestones — not separate tagged releases
+
+These versions describe development snapshots, not previously published tagged
+releases. They are retained as history rather than assigned invented release dates.
+
+### 0.3.0
 
 - Modernize CI to SHA-pinned Node 24 actions with Dependabot updates, skip duplicate
   branch/PR runs and cancel superseded runs; keep main and version-tag checks.
@@ -16,7 +37,7 @@
 - Keep CLI commands/options, schema version 2, archives and geographic/data
   semantics unchanged.
 
-## 0.2.2 — unreleased
+### 0.2.2
 
 - Resolve Sonar maintainability findings by separating decoding, validation,
   geographic path building, health-window retries and CLI/backfill dispatch.
@@ -26,7 +47,7 @@
 - Add a concise README, detailed usage guide, security-reporting policy and GitHub
   contribution templates; document portable optional SonarQube scanning.
 
-## 0.2.1 — unreleased
+### 0.2.1
 
 - Add a shared local/CI Python quality gate with lint/format, package-wide type
   checking, security/secret scans, branch-aware coverage, strict package metadata,
@@ -37,7 +58,7 @@
 - Add offline authentication-cache and bounded HTTP retry regression tests.
 - Resolve type/lint findings while preserving the schema and geographic contract.
 
-## 0.2.0 — unreleased
+### 0.2.0
 
 - Refactor into a lightweight hexagonal monolith with explicit source, repository,
   archive, decoder and progress ports and a `SyncService` application entry point.
@@ -47,7 +68,7 @@
 - Preserve CLI options, schema version 2 and legacy import facades.
 - Add executable dependency rules and infrastructure-free application tests.
 
-## 0.1.1 — unreleased
+### 0.1.1
 
 - Add `--all-data` coverage for all 26 documented GET operations, including daily
   summaries/details, individual weight measurements, women's-health endpoints,
@@ -58,7 +79,7 @@
 - Forward comprehensive mode to detached backfills and freeze their ending date.
 - Add endpoint-reference coverage, complete-mode retry/idempotence tests and scope docs.
 
-## 0.1.0 — unreleased
+### 0.1.0
 
 Initial alpha release candidate:
 

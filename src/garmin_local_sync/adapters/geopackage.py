@@ -3,6 +3,7 @@
 import datetime as dt
 import os
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import quote
 
@@ -10,7 +11,7 @@ from osgeo import ogr, osr
 
 from ..config import SCHEMA_VERSION
 from ..domain.health import normalize_response
-from ..domain.models import ActivityState, DateWindow
+from ..domain.models import ActivityState, DateWindow, Message, Sample
 from ..util import dumps, now
 from .geometry import activity_geometries
 from .mapping import sample_to_row, summary_from_payload
@@ -176,7 +177,7 @@ class GeoPackageRepository:
         self.db.close()
 
     def save_summary(self, payload):
-        """Compatibility entry point for callers holding raw Garmin summaries."""
+        """Save one vendor summary at the infrastructure boundary."""
         self._save_summary(summary_from_payload(payload))
 
     def save_summaries(self, summaries):
@@ -288,7 +289,9 @@ class GeoPackageRepository:
         finally:
             ds = None
 
-    def save_activity(self, aid, detail, samples, messages, fmt):
+    def save_activity(
+        self, aid: int, detail: dict, samples: Sequence[Sample], messages: Sequence[Message], fmt: str
+    ):
         # Invalidate an old checkpoint before either connection commits a refresh.
         # A crash between geometry and attributes must remain visibly incomplete.
         with self.db:
@@ -298,16 +301,16 @@ class GeoPackageRepository:
             self.db.execute("DELETE FROM activity_samples WHERE activity_id=?", (aid,))
             self.db.executemany(
                 "INSERT INTO activity_samples(activity_id,sample_index,timestamp_utc,latitude,longitude,altitude_m,distance_m,speed_mps,heart_rate_bpm,cadence_rpm,power_w,temperature_c,raw_json,segment_index) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                samples,
+                (sample_to_row(sample, aid) for sample in samples),
             )
             self.db.execute("DELETE FROM activity_fit_messages WHERE activity_id=?", (aid,))
             self.db.executemany(
                 "INSERT INTO activity_fit_messages(activity_id,message_index,message_type,raw_json) VALUES(?,?,?,?)",
-                messages,
+                ((aid, m.index, m.message_type, dumps(m.raw)) for m in messages),
             )
             self.db.execute(
                 "UPDATE activities SET detail_json=?,samples_synced_at=?,sample_count=?,gps_point_count=?,source_format=? WHERE activity_id=?",
-                (dumps(detail), now(), len(samples), sum(s[3] is not None for s in samples), fmt, aid),
+                (dumps(detail), now(), len(samples), sum(s.latitude is not None for s in samples), fmt, aid),
             )
             self.clear_error(f"activity:{aid}")
 
@@ -355,8 +358,8 @@ class GeoPackageRepository:
         self.save_activity(
             activity_id,
             detail.raw,
-            [sample_to_row(s, activity_id) for s in decoded.samples],
-            [(activity_id, m.index, m.message_type, dumps(m.raw)) for m in decoded.messages],
+            decoded.samples,
+            decoded.messages,
             decoded.source_format,
         )
 

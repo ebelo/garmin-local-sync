@@ -5,21 +5,21 @@ import datetime as dt
 import io
 import math
 import zipfile
+from dataclasses import replace
 from typing import Any
 
 import fitdecode
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
+from ..application.ports import ActivityDecoder
 from ..config import UTC
 from ..domain.errors import DecodeError
 from ..domain.geography import valid_coords
-from ..domain.models import DecodedActivity
-from ..util import dumps
-from .mapping import message_from_row, sample_from_row
+from ..domain.models import DecodedActivity, Message, Sample
 
 
-def sample_row(aid, index, values, segment=0):
+def sample_from_values(index: int, values: dict, segment: int = 0) -> Sample:
     values = dict(values)
     nonfinite = {k: str(v) for k, v in values.items() if isinstance(v, float) and not math.isfinite(v)}
     if nonfinite:
@@ -35,21 +35,20 @@ def sample_row(aid, index, values, segment=0):
         timestamp = timestamp.astimezone(UTC).isoformat()
     altitude = values.get("enhanced_altitude")
     speed = values.get("enhanced_speed")
-    return (
-        aid,
-        index,
-        timestamp,
-        lat,
-        lon,
-        altitude if altitude is not None else values.get("altitude"),
-        values.get("distance"),
-        speed if speed is not None else values.get("speed"),
-        values.get("heart_rate"),
-        values.get("cadence"),
-        values.get("power"),
-        values.get("temperature"),
-        dumps(values),
-        segment,
+    return Sample(
+        index=index,
+        timestamp_utc=timestamp,
+        latitude=lat,
+        longitude=lon,
+        altitude_m=altitude if altitude is not None else values.get("altitude"),
+        distance_m=values.get("distance"),
+        speed_mps=speed if speed is not None else values.get("speed"),
+        heart_rate_bpm=values.get("heart_rate"),
+        cadence_rpm=values.get("cadence"),
+        power_w=values.get("power"),
+        temperature_c=values.get("temperature"),
+        raw=values,
+        segment_index=segment,
     )
 
 
@@ -70,9 +69,9 @@ def is_timer_stop(name, values):
     )
 
 
-def parse_fit(content, aid, offset=0):
-    samples: list[tuple] = []
-    messages: list[tuple] = []
+def parse_fit(content, offset=0) -> tuple[list[Sample], list[Message]]:
+    samples: list[Sample] = []
+    messages: list[Message] = []
     segment = 0
     with fitdecode.FitReader(io.BytesIO(content), check_crc=fitdecode.CrcCheck.WARN) as reader:
         for frame in reader:
@@ -80,12 +79,12 @@ def parse_fit(content, aid, offset=0):
                 continue
             if frame.name == "record":
                 values = fit_record_values(frame)
-                samples.append(sample_row(aid, offset + len(samples), values, segment))
+                samples.append(sample_from_values(offset + len(samples), values, segment))
             else:
                 values = {f.name: f.value for f in frame.fields}
                 if is_timer_stop(frame.name, values):
                     segment += 1
-                messages.append((aid, len(messages), frame.name, dumps(values)))
+                messages.append(Message(len(messages), frame.name, values))
     return samples, messages
 
 
@@ -151,13 +150,13 @@ def xml_values(point):
     return values
 
 
-def parse_xml(content, aid, offset=0):
+def parse_xml(content, offset=0) -> tuple[list[Sample], list[Message]]:
     try:
         root = ET.fromstring(content)
     except (ET.ParseError, DefusedXmlException):
         raise ValueError("Invalid GPX/TCX XML") from None
     samples = [
-        sample_row(aid, offset + i, xml_values(point), segment)
+        sample_from_values(offset + i, xml_values(point), segment)
         for i, (point, segment) in enumerate(xml_points(root))
     ]
     return samples, []
@@ -190,30 +189,26 @@ def activity_files(content):
     return files
 
 
-def parse_archive(content, aid):
+def parse_archive(content) -> DecodedActivity:
     files = activity_files(content)
-    samples: list[tuple] = []
-    messages: list[tuple] = []
+    samples: list[Sample] = []
+    messages: list[Message] = []
     segment_offset = 0
     for ext, blob in files:
-        rows, meta = (parse_fit if ext == ".fit" else parse_xml)(blob, aid, len(samples))
-        messages.extend([(a, len(messages) + i, typ, data) for i, (a, _, typ, data) in enumerate(meta)])
+        observations, metadata = (parse_fit if ext == ".fit" else parse_xml)(blob, len(samples))
+        message_offset = len(messages)
+        messages.extend(replace(m, index=message_offset + i) for i, m in enumerate(metadata))
         # Segment metadata marks file boundaries without inventing sensor records.
-        adjusted = [(*row[:13], row[13] + segment_offset) for row in rows]
+        adjusted = [replace(s, segment_index=s.segment_index + segment_offset) for s in observations]
         samples.extend(adjusted)
         if adjusted:
-            segment_offset = max(row[13] for row in adjusted) + 1
-    return samples, messages, files[0][0].lstrip(".")
+            segment_offset = max(s.segment_index for s in adjusted) + 1
+    return DecodedActivity(tuple(samples), tuple(messages), files[0][0].lstrip("."))
 
 
-class OriginalActivityDecoder:
+class OriginalActivityDecoder(ActivityDecoder):
     def decode(self, content: bytes, activity_id: int) -> DecodedActivity:
         try:
-            samples, messages, fmt = parse_archive(content, activity_id)
-            return DecodedActivity(
-                tuple(sample_from_row(s) for s in samples),
-                tuple(message_from_row(m) for m in messages),
-                fmt,
-            )
+            return parse_archive(content)
         except (ValueError, RuntimeError, zipfile.BadZipFile, fitdecode.FitError) as error:
             raise DecodeError(str(error)) from None

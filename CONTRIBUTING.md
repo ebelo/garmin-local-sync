@@ -27,6 +27,16 @@ example generator is the preferred reproducible fixture, not an account export.
 Setuptools reads `__version__` when building wheel/sdist metadata; the installed-wheel
 smoke check verifies that runtime and distribution versions agree.
 
+## Releases
+
+The changelog distinguishes tagged releases from earlier development milestones.
+For an alpha release, merge verified changes, run the shared quality gate for that
+exact source, and create an annotated `v<version>` tag matching `__version__`.
+Publish a GitHub prerelease with the wheel, source distribution and SHA-256 checksums;
+GitHub Actions also checks version-tag pushes. A GitHub release is not a PyPI upload.
+Never attach personal databases, original activity files, credentials or private
+acceptance-test reports.
+
 ## Quality gate
 
 `python scripts/check_quality.py` runs the same gate locally and in GitHub Actions:

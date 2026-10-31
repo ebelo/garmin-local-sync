@@ -11,6 +11,8 @@
 - FIT exercise-category candidates are not verified corrected exercise names. Avoid
   strength claims based on ambiguous movement labels or cross-equipment loads.
 - Preserve idempotence, checkpoint honesty, bounded retries, and one-writer locking.
+- Keep typed Sample/Message values through decoding and geometry; positional rows
+  and JSON encoding belong only at the SQL persistence boundary.
 - Keep dependency direction inward: domain uses only the standard library;
   application imports domain and its own ports, never adapters or root-level helpers.
   HTTP paths, SQL, filesystem operations and GDAL objects belong to adapters.

@@ -70,6 +70,9 @@ Never publish real databases, activity files, health records or credentials.
 For development, install `python -m pip install -e '.[dev]'` and run
 `python scripts/check_quality.py`. Tests and examples use synthetic data only.
 
+[Tagged alpha releases](https://github.com/ebelo/garmin-local-sync/releases) include
+Python distributions and checksums. See the [changelog](CHANGELOG.md) for changes.
+
 ## Licence
 
 [MIT](LICENSE). Copyright 2026 Emmanuel Belo. Garmin is a trademark of its owner.

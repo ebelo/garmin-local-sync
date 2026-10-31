@@ -6,11 +6,12 @@ import zipfile
 import pytest
 from osgeo import ogr
 
-from garmin_local_sync.adapters.decoding import parse_archive, sample_row
+from garmin_local_sync.adapters.decoding import parse_archive, sample_from_values
 from garmin_local_sync.adapters.garmin import GarminSource
 from garmin_local_sync.adapters.geopackage import GeoPackageRepository
 from garmin_local_sync.adapters.http import Api, ApiError
 from garmin_local_sync.application.sync import covered, intervals, sync_wellness
+from garmin_local_sync.domain.models import Message
 from garmin_local_sync.util import dumps
 
 
@@ -43,7 +44,8 @@ def test_archive_to_real_gpkg_is_idempotent_and_axis_order_is_correct(store):
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as z:
         z.writestr("../../track.gpx", GPX)  # ZIP members are read in memory, never extracted.
-    rows, messages, fmt = parse_archive(archive.getvalue(), 1)
+    decoded = parse_archive(archive.getvalue())
+    rows, messages, fmt = decoded.samples, decoded.messages, decoded.source_format
     with store.db:
         store.save_summary(summary())
     store.save_activity(1, {"detail": True}, rows, messages, fmt)
@@ -56,8 +58,8 @@ def test_archive_to_real_gpkg_is_idempotent_and_axis_order_is_correct(store):
     feature = ds.GetLayerByName("activity_tracks").GetNextFeature()
     coords = json.loads(feature.GetGeometryRef().ExportToJson())["coordinates"]
     assert coords == [[[7.3, 46.2], [7.4, 46.3]]]
-    assert rows[0][5] == 500
-    assert rows[0][2] == "2026-10-29T09:00:00+00:00"
+    assert rows[0].altitude_m == 500
+    assert rows[0].timestamp_utc == "2026-10-29T09:00:00+00:00"
 
 
 def test_summary_refresh_preserves_import_checkpoint(store):
@@ -195,7 +197,7 @@ def test_intervals_are_inclusive_and_non_overlapping():
 def test_invalid_gps_stays_null_and_never_becomes_bogus_track(store):
     with store.db:
         store.save_summary(summary())
-    rows = [sample_row(1, 0, {"latitude": 200, "longitude": 7, "heart_rate": 100})]
+    rows = [sample_from_values(0, {"latitude": 200, "longitude": 7, "heart_rate": 100})]
     store.save_activity(1, {}, rows, [], "fit")
     assert store.db.execute("SELECT latitude,longitude,heart_rate_bpm FROM activity_samples").fetchone() == (
         None,
@@ -209,10 +211,37 @@ def test_fit_time_metadata_serializes():
     assert json.loads(dumps({"clock": dt.time(9, 30)}))["clock"] == "09:30:00"
 
 
+def test_native_typed_payloads_retain_json_values_at_sql_boundary(store):
+    stamp = dt.datetime(2024, 1, 1, 12, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    sample = sample_from_values(
+        0, {"timestamp": stamp, "altitude": float("nan"), "blob": b"\x00\xff", "nested": [dt.time(9, 30)]}
+    )
+    message = Message(0, "synthetic", {"timestamp": stamp, "blob": b"\x00\xff"})
+    with store.db:
+        store.save_summary(summary())
+    store.save_activity(1, {}, [sample], [message], "synthetic")
+    timestamp, altitude, raw = store.db.execute(
+        "SELECT timestamp_utc,altitude_m,raw_json FROM activity_samples"
+    ).fetchone()
+    assert timestamp == "2024-01-01T10:00:00+00:00"
+    assert altitude is None
+    assert json.loads(raw) == {
+        "timestamp": "2024-01-01T12:00:00+02:00",
+        "altitude": None,
+        "blob": {"base64": "AP8="},
+        "nested": ["09:30:00"],
+        "_nonfinite_values": {"altitude": "nan"},
+    }
+    raw_message = store.db.execute("SELECT raw_json FROM activity_fit_messages").fetchone()[0]
+    assert json.loads(raw_message) == {"timestamp": "2024-01-01T12:00:00+02:00", "blob": {"base64": "AP8="}}
+
+
 def test_null_enhanced_fit_fields_fall_back_to_legacy_measurements():
-    row = sample_row(1, 0, {"enhanced_altitude": None, "altitude": 500, "enhanced_speed": None, "speed": 3.5})
-    assert row[5] == 500
-    assert row[7] == 3.5
+    row = sample_from_values(
+        0, {"enhanced_altitude": None, "altitude": 500, "enhanced_speed": None, "speed": 3.5}
+    )
+    assert row.altitude_m == 500
+    assert row.speed_mps == 3.5
 
 
 def test_multiple_wellness_activities_on_same_day_are_preserved(store):
@@ -284,7 +313,7 @@ def test_multiple_archive_files_have_unique_message_and_sample_indices():
     with zipfile.ZipFile(archive, "w") as z:
         z.writestr("one.gpx", GPX)
         z.writestr("two.gpx", GPX)
-    rows, _, _ = parse_archive(archive.getvalue(), 1)
+    rows = parse_archive(archive.getvalue()).samples
     assert len(rows) == 4  # No fabricated sensor row at a file boundary.
-    assert [r[1] for r in rows] == list(range(4))
-    assert [r[13] for r in rows] == [0, 0, 1, 1]
+    assert [r.index for r in rows] == list(range(4))
+    assert [r.segment_index for r in rows] == [0, 0, 1, 1]
