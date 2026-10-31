@@ -7,7 +7,6 @@ import pytest
 from osgeo import ogr
 from osgeo_utils.samples.validate_gpkg import check
 
-from garmin_local_sync import cli
 from garmin_local_sync.adapters.geometry import ELEVATION_METADATA, activity_geometries, activity_track_3d
 from garmin_local_sync.adapters.geopackage import GeoPackageRepository
 from garmin_local_sync.adapters.validation import check_store
@@ -107,118 +106,6 @@ def test_elevation_layer_registration_metadata_and_reference_are_persistent(tmp_
     ds = None
 
 
-def legacy_database(path):
-    create_example(path)
-    ds = ogr.Open(str(path), 1)
-    index = next(i for i in range(ds.GetLayerCount()) if ds.GetLayer(i).GetName() == "activity_tracks_3d")
-    ds.DeleteLayer(index)
-    ds = None
-    with sqlite3.connect(path) as db:
-        db.execute("ALTER TABLE activities DROP COLUMN geometry_3d_synced_at")
-        db.execute("UPDATE schema_version SET version=2")
-    return path
-
-
-def source_snapshot(path):
-    with sqlite3.connect(path) as db:
-        result = {}
-        for table in (
-            "activities",
-            "activity_samples",
-            "activity_fit_messages",
-            "api_responses",
-            "wellness_records",
-            "daily_metrics",
-        ):
-            columns = [
-                r[1] for r in db.execute(f"PRAGMA table_info({table})") if r[1] != "geometry_3d_synced_at"
-            ]
-            result[table] = db.execute(f"SELECT {','.join(columns)} FROM {table} ORDER BY 1").fetchall()
-    ds = ogr.Open(str(path))
-    for name in ("activity_tracks", "activity_starts"):
-        result[name] = [
-            (f.items(), bytes(f.GetGeometryRef().ExportToIsoWkb())) for f in ds.GetLayerByName(name)
-        ]
-    return result
-
-
-def test_offline_upgrade_rebuild_is_incremental_and_preserves_existing_data(tmp_path, monkeypatch, capsys):
-    path = legacy_database(tmp_path / "legacy.gpkg")
-    snapshot = source_snapshot(path)
-    before = path.read_bytes()
-    store = GeoPackageRepository(path, read_only=True)
-    assert store.schema_version == 2
-    assert check_store(store)["valid"]
-    store.close()
-    assert path.read_bytes() == before
-
-    def no_api(*args):
-        raise AssertionError("Offline rebuild must not authenticate or use Garmin")
-
-    monkeypatch.setattr(cli, "Api", no_api)
-    args = ["rebuild-3d", "--database", str(path), "--root", str(tmp_path)]
-    assert cli.main(args + ["--activity-limit", "1"]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert report["activities_processed"] == 1
-    assert report["pending_3d_activities"] == 3
-    assert cli.main(args) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert report["activities_processed"] == 3
-    assert report["pending_3d_activities"] == 0
-    assert cli.main(args) == 0
-    assert json.loads(capsys.readouterr().out)["activities_processed"] == 0
-    assert source_snapshot(path) == snapshot
-    assert not check(str(path), extra_checks=True, warning_as_error=True)
-
-
-@pytest.mark.parametrize("after_layer", [False, True])
-def test_interrupted_migration_retries_without_duplicate_columns(tmp_path, monkeypatch, after_layer):
-    path = legacy_database(tmp_path / "legacy.gpkg")
-    original = GeoPackageRepository._ensure_3d_layer
-
-    def fail(self):
-        if after_layer:
-            original(self)
-        raise RuntimeError("injected layer creation failure")
-
-    monkeypatch.setattr(GeoPackageRepository, "_ensure_3d_layer", fail)
-    with pytest.raises(RuntimeError, match="injected"):
-        GeoPackageRepository(path)
-    with sqlite3.connect(path) as db:
-        assert db.execute("SELECT version FROM schema_version").fetchone()[0] == 2
-    monkeypatch.setattr(GeoPackageRepository, "_ensure_3d_layer", original)
-    store = GeoPackageRepository(path)
-    assert store.schema_version == 3
-    assert store.pending_3d_count() == 4
-    assert store.rebuild_3d()["activities_processed"] == 4
-    assert check_store(store)["valid"]
-    store.close()
-
-
-def test_failed_rebuild_keeps_checkpoint_pending_and_resume_retries_only_failed_item(tmp_path, monkeypatch):
-    path = legacy_database(tmp_path / "legacy.gpkg")
-    store = GeoPackageRepository(path)
-    original = store._write_geometries
-
-    def fail(aid, geometries):
-        if aid == 1001:
-            raise RuntimeError("injected geometry failure")
-        original(aid, geometries)
-
-    monkeypatch.setattr(store, "_write_geometries", fail)
-    report = store.rebuild_3d()
-    assert report["activities_failed"] == 1
-    assert report["pending_3d_activities"] == 1
-    assert store.has_failure("geometry3d:1001")
-    monkeypatch.setattr(store, "_write_geometries", original)
-    report = store.rebuild_3d()
-    assert report["activities_processed"] == 1
-    assert report["pending_3d_activities"] == 0
-    assert not store.has_failure("geometry3d:1001")
-    assert check_store(store)["valid"]
-    store.close()
-
-
 def test_3d_validation_detects_a_finite_but_wrong_recorded_height(tmp_path):
     path = tmp_path / "example.gpkg"
     create_example(path)
@@ -241,10 +128,71 @@ def test_3d_validation_detects_a_finite_but_wrong_recorded_height(tmp_path):
     assert any("differs from source samples" in message for message in report["errors"])
 
 
-def test_rebuild_of_a_missing_database_does_not_create_it(tmp_path):
-    root = tmp_path / "missing"
-    assert cli.main(["rebuild-3d", "--root", str(root)]) == 1
-    assert not root.exists()
+@pytest.mark.parametrize("after_geometry", [False, True])
+def test_interrupted_refresh_retries_all_geometry_and_source_data(tmp_path, monkeypatch, after_geometry):
+    path = tmp_path / "example.gpkg"
+    create_example(path)
+    store = GeoPackageRepository(path)
+    samples = observations([(10, 20, 100.123456789), (11, 21, 120.987654321)])
+    original = store._write_geometries
+
+    def fail(aid, geometries):
+        if after_geometry:
+            original(aid, geometries)
+        raise RuntimeError("injected geometry failure")
+
+    try:
+        monkeypatch.setattr(store, "_write_geometries", fail)
+        with pytest.raises(RuntimeError, match="injected geometry failure"):
+            store.save_activity(1001, {}, samples, [], "synthetic")
+        assert store.db.execute(
+            "SELECT samples_synced_at FROM activities WHERE activity_id=1001"
+        ).fetchone() == (None,)
+        assert check_store(store)["incomplete_activities"] == 1
+        monkeypatch.setattr(store, "_write_geometries", original)
+        store.save_activity(1001, {}, samples, [], "synthetic")
+        report = check_store(store)
+        assert report["valid"], report["errors"]
+        assert report["incomplete_activities"] == 0
+        assert store.db.execute(
+            "SELECT longitude,latitude,altitude_m FROM activity_samples "
+            "WHERE activity_id=1001 ORDER BY sample_index"
+        ).fetchall() == [(10, 20, 100.123456789), (11, 21, 120.987654321)]
+        ds = ogr.Open(str(path))
+        for name, expected in (
+            ("activity_tracks", [(10, 20), (11, 21)]),
+            ("activity_tracks_3d", [(10, 20, 100.123456789), (11, 21, 120.987654321)]),
+            ("activity_starts", [(10, 20)]),
+        ):
+            layer = ds.GetLayerByName(name)
+            layer.SetAttributeFilter("activity_id=1001")
+            assert layer.GetFeatureCount() == 1
+            feature = layer.GetNextFeature()
+            geometry = feature.GetGeometryRef()
+            points = (
+                geometry.GetPoints() if name == "activity_starts" else geometry.GetGeometryRef(0).GetPoints()
+            )
+            assert points == expected
+        feature = layer = ds = None
+    finally:
+        store.close()
+
+
+def test_3d_validation_detects_a_missing_track_for_completed_source(tmp_path):
+    path = tmp_path / "example.gpkg"
+    create_example(path)
+    ds = ogr.Open(str(path), 1)
+    layer = ds.GetLayerByName("activity_tracks_3d")
+    feature = layer.GetNextFeature()
+    layer.DeleteFeature(feature.GetFID())
+    feature = layer = ds = None
+    store = GeoPackageRepository(path, read_only=True)
+    try:
+        report = check_store(store)
+        assert not report["valid"]
+        assert any("differs from source samples" in message for message in report["errors"])
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("value", [True, "invalid height"])
@@ -265,18 +213,6 @@ def test_invalid_numeric_elevation_is_null_in_storage_without_losing_raw_provena
     )
     assert check_store(store)["valid"]
     store.close()
-
-
-def test_rebuild_refuses_an_active_writer_before_migrating(tmp_path, capsys):
-    import fcntl
-
-    path = legacy_database(tmp_path / "legacy.gpkg")
-    before = path.read_bytes()
-    with path.with_suffix(".gpkg.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        assert cli.main(["rebuild-3d", "--database", str(path), "--root", str(tmp_path)]) == 1
-    assert "Another sync/check" in capsys.readouterr().err
-    assert path.read_bytes() == before
 
 
 def test_validator_rejects_vertical_metadata_that_claims_ellipsoidal_heights(tmp_path):

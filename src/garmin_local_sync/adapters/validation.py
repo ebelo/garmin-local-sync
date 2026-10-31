@@ -145,15 +145,7 @@ def geometry_bytes(geometry):
 
 
 def check_elevation_source(store, layer, errors):
-    stale = store.db.execute(
-        "SELECT count(*) FROM activities WHERE geometry_3d_synced_at IS NOT NULL "
-        "AND samples_synced_at IS NULL"
-    ).fetchone()[0]
-    if stale:
-        errors.append("3D completion checkpoints exist for incomplete source imports")
-    activities = store.db.execute(
-        "SELECT activity_id FROM activities WHERE geometry_3d_synced_at IS NOT NULL"
-    )
+    activities = store.db.execute("SELECT activity_id FROM activities WHERE samples_synced_at IS NOT NULL")
     for (aid,) in activities:
         expected = activity_track_3d(store._stored_geographic_samples(aid))
         layer.SetAttributeFilter(f"activity_id={int(aid)}")
@@ -198,8 +190,6 @@ def check_store(store):
     if ds is None:
         raise RuntimeError("GDAL could not open the GeoPackage")
     for name, expected in SPATIAL_LAYERS:
-        if name == "activity_tracks_3d" and store.schema_version < 3:
-            continue
         layer = ds.GetLayerByName(name)
         if layer is None:
             errors.append(f"{name}: missing spatial layer")
@@ -215,7 +205,6 @@ def check_store(store):
     return {
         "valid": not errors,
         "schema_version": store.schema_version,
-        "pending_3d_activities": store.pending_3d_count(),
         "integrity": integrity[0][0],
         "foreign_key_errors": len(foreign_keys),
         "geographic_layers": layers,

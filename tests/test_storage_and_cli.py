@@ -49,33 +49,26 @@ def test_foreign_sqlite_file_is_never_adopted_or_modified(tmp_path):
     assert digest(path) == before
 
 
-def test_unknown_schema_is_rejected_without_rewriting_database(tmp_path):
-    path = tmp_path / "future.gpkg"
+@pytest.mark.parametrize("version", [1, 2, 99])
+@pytest.mark.parametrize("read_only", [False, True])
+def test_noncurrent_schema_is_rejected_without_rewriting_database(tmp_path, version, read_only):
+    path = tmp_path / "unsupported.gpkg"
     create_example(path)
     with sqlite3.connect(path) as db:
-        db.execute("UPDATE schema_version SET version=99")
-    before = digest(path)
-    with pytest.raises(RuntimeError, match="Unsupported"):
-        GeoPackageRepository(path)
+        db.execute("UPDATE schema_version SET version=?", (version,))
+    before, mode = digest(path), path.stat().st_mode
+    with pytest.raises(RuntimeError, match="Unsupported database schema version"):
+        GeoPackageRepository(path, read_only=read_only)
     assert digest(path) == before
+    assert path.stat().st_mode == mode
 
 
-def test_legacy_schema_is_migrated_only_on_a_write_open(tmp_path):
-    path = tmp_path / "legacy.gpkg"
-    create_example(path)
-    with sqlite3.connect(path) as db:
-        db.execute("ALTER TABLE activity_samples DROP COLUMN segment_index")
-        db.execute("UPDATE schema_version SET version=1")
-    before = digest(path)
-    store = GeoPackageRepository(path, read_only=True)
-    assert store.db.execute("SELECT version FROM schema_version").fetchone()[0] == 1
-    store.close()
-    assert digest(path) == before
-    store = GeoPackageRepository(path)
-    assert store.db.execute("SELECT version FROM schema_version").fetchone()[0] == 3
-    assert store.db.execute("SELECT count(*) FROM activity_samples").fetchone()[0] == 8
-    assert store.db.execute("SELECT DISTINCT segment_index FROM activity_samples").fetchall() == [(0,)]
-    store.close()
+def test_removed_rebuild_command_is_rejected_before_creating_files(tmp_path):
+    root = tmp_path / "missing"
+    with pytest.raises(SystemExit) as exc:
+        main(["rebuild-3d", "--root", str(root)])
+    assert exc.value.code == 2
+    assert not root.exists()
 
 
 def test_refresh_failure_invalidates_the_old_completion_checkpoint(tmp_path):
@@ -87,10 +80,6 @@ def test_refresh_failure_invalidates_the_old_completion_checkpoint(tmp_path):
         store.save_activity(1001, {}, [row, row], [], "synthetic")
     assert (
         store.db.execute("SELECT samples_synced_at FROM activities WHERE activity_id=1001").fetchone()[0]
-        is None
-    )
-    assert (
-        store.db.execute("SELECT geometry_3d_synced_at FROM activities WHERE activity_id=1001").fetchone()[0]
         is None
     )
     assert store.db.execute("SELECT count(*) FROM activity_samples WHERE activity_id=1001").fetchone()[0] == 4

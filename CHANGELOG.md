@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Remove the offline `rebuild-3d` command, automatic schema-1/2 upgrades and separate
+  3D processing checkpoints. Keep this early alpha focused on fresh imports and
+  incremental sync, which generates 2D/3D geometry under one activity checkpoint.
+- Reject noncurrent schema versions without changing the export. Preserve all
+  elevation, geometry, metadata and source-fidelity checks for the current schema.
+
 ## 0.5.0 — 2026-10-31
 
 - Add `activity_tracks_3d` as a derived MultiLineString Z layer while retaining
@@ -106,6 +114,6 @@ Initial alpha release candidate:
 - Read-only status/geography/integrity checks and a detached one-off backfill runner.
 - Synthetic example generator and offline tests, including independent GDAL validation.
 
-The current application schema is version 3. Legacy schema-1/2 databases remain
-readable and migrate only on a write-open; derived 3D geometry can be built offline.
-See [schema and migration notes](docs/schema.md).
+The current application schema is version 3. Only the current schema is supported
+on the development branch; published releases retain their documented behaviour.
+See the [schema policy](docs/schema.md#schema-policy).
