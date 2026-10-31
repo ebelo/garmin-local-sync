@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 — unreleased
+
+- Add `--all-data` coverage for all 26 documented GET operations, including daily
+  summaries/details, individual weight measurements, women's-health endpoints,
+  performed activity workouts and multisport child activities.
+- Preserve multiple same-day weight measurements and independent workout checkpoints.
+- Forward comprehensive mode to detached backfills and freeze their ending date.
+- Add endpoint-reference coverage, complete-mode retry/idempotence tests and scope docs.
+
 ## 0.1.0 — unreleased
 
 Initial alpha release candidate:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import fcntl
 import json
 import os
@@ -10,11 +11,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import DEFAULT_KEY, DEFAULT_ROOT
 from .util import atomic_write, now
 
 
-def worker(root=None, delay=1.0, key_file=DEFAULT_KEY):
+def worker(root=None, delay=1.0, key_file=DEFAULT_KEY, all_data=False, refresh_days=7):
     root = Path(root or DEFAULT_ROOT).expanduser().resolve()
     report_path = root / "backfill-status.json"
     os.umask(0o077)
@@ -25,19 +27,34 @@ def worker(root=None, delay=1.0, key_file=DEFAULT_KEY):
         except BlockingIOError:
             print("A historical backfill is already running", flush=True)
             return 1
-        report = {"status": "running", "pid": os.getpid(), "started_at": now()}
+        report = {
+            "status": "running",
+            "pid": os.getpid(),
+            "started_at": now(),
+            "all_data": all_data,
+            "refresh_days": refresh_days,
+            "end_date": dt.date.today().isoformat(),
+            "package_version": __version__,
+            "interpreter": sys.executable,
+        }
 
         def update(**values):
             report.update(values)
             atomic_write(report_path, json.dumps(report, indent=2).encode())
 
         def run(*args, capture=False):
+            sync_options = []
+            if args[0] == "sync":
+                sync_options = ["--refresh-days", str(refresh_days), "--end", report["end_date"]]
+                if all_data:
+                    sync_options.append("--all-data")
             return subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "garmin_local_sync",
                     *args,
+                    *sync_options,
                     "--root",
                     str(root),
                     "--api-key-file",
@@ -89,17 +106,21 @@ def main():
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--api-key-file", type=Path, default=DEFAULT_KEY)
     parser.add_argument("--delay", type=float, default=1.0)
+    parser.add_argument("--all-data", action="store_true", help="Include every supported read endpoint")
+    parser.add_argument("--refresh-days", type=int, default=7)
     args = parser.parse_args()
     import math
 
     if not math.isfinite(args.delay) or args.delay < 0:
         parser.error("--delay must be a finite non-negative number")
+    if args.refresh_days < 0:
+        parser.error("--refresh-days cannot be negative")
     root = args.root.expanduser().resolve()
     report_path = root / "backfill-status.json"
     log_path = root / "backfill.log"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     if args.command == "worker":
-        return worker(root, args.delay, args.api_key_file)
+        return worker(root, args.delay, args.api_key_file, args.all_data, args.refresh_days)
     if args.command == "status":
         if report_path.exists():
             report = json.loads(report_path.read_text())
@@ -137,6 +158,9 @@ def main():
                 str(args.delay),
                 "--api-key-file",
                 str(args.api_key_file.expanduser().resolve()),
+                "--refresh-days",
+                str(args.refresh_days),
+                *(["--all-data"] if args.all_data else []),
             ],
             stdin=subprocess.DEVNULL,
             stdout=log,

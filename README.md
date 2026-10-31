@@ -85,6 +85,9 @@ garmin-sync sync
 # Run again to resume unfinished imports and refresh the most recent seven days.
 garmin-sync sync
 
+# Fetch every documented read endpoint, including all daily details and workouts.
+garmin-sync sync --all-data
+
 # A small live test: the latest three activities and a bounded health interval.
 garmin-sync sync --activity-limit 3 --start 2026-01-01 --end 2026-01-07
 
@@ -102,6 +105,11 @@ garmin-sync check
 ```
 
 `--start` and `--end` bound **health requests**, not activity history.
+`--all-data` covers all 26 documented GET operations, including performed workouts,
+multisport child activities, individual weight measurements and all nine daily-detail
+datasets. See [API coverage and scope](docs/api-coverage.md); daily arrays are retained
+in full JSON, and a full detail backfill can take many hours.
+
 `--activity-limit N` explicitly limits activity indexing/import. `--skip-health`
 syncs only activities. `--refresh` refetches completed history, including historical
 edits; `--refresh-days N` changes the recent refresh window (including today), and
@@ -121,6 +129,7 @@ independently checkpointed requests.
 
 ```bash
 garmin-sync-backfill start
+garmin-sync-backfill start --all-data --refresh-days 0
 garmin-sync-backfill status
 ```
 

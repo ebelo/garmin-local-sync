@@ -320,6 +320,10 @@ class Store:
                     if isinstance(identity, dict):
                         identity = identity.get("uuid")
                     rid = str(identity or f"{rid}:{index}")
+                if dataset == "weight_entries":
+                    # Multiple measurements on one date must not overwrite one another.
+                    identity = record.get("id") or record.get("timestampGMT") or record.get("date")
+                    rid = f"{day}:{identity if identity is not None else index}"
                 self.db.execute(
                     "INSERT INTO wellness_records(dataset,record_key,calendar_date,payload_json,fetched_at) VALUES(?,?,?,?,?) ON CONFLICT(dataset,record_key) DO UPDATE SET calendar_date=excluded.calendar_date,payload_json=excluded.payload_json,fetched_at=excluded.fetched_at",
                     (dataset, rid, day, dumps(record), now()),

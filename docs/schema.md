@@ -114,3 +114,10 @@ versions and unrelated SQLite/GeoPackage files are rejected before modification.
 Back up a prototype database before its first upgrade. Existing old geometries are
 not silently rewritten; use `sync --refresh` to re-decode their original archives
 with the new segment/date-line rules. Do not run old and new writers together.
+
+`--all-data` additionally archives performed workouts under the `activity_workouts`
+dataset, using activity ID as request key, and fetches all documented detailed daily
+endpoints. Daily arrays remain in the original JSON; scalar numeric leaves become
+metrics. `weight_entries` retains separate same-day measurements using their source
+timestamp/identity rather than overwriting all measurements with the last one. Raw
+weight units remain as returned by each endpoint. See [endpoint coverage](api-coverage.md).

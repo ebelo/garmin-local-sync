@@ -6,7 +6,7 @@ import zipfile
 import fitdecode
 
 from .api import ApiError
-from .datasets import DETAIL_DATASETS, RANGE_DATASETS, RANGE_DAYS
+from .datasets import DETAIL_DATASETS, DETAIL_PARAMS, RANGE_DATASETS, RANGE_DAYS
 from .formats import parse_archive
 from .util import atomic_write
 
@@ -41,13 +41,16 @@ def covered(store, dataset, start, end):
     return False
 
 
-def sync_activity_list(api, store, limit=None):
+def sync_activity_list(api, store, limit=None, include_children=False):
     offset, count = 0, 0
     while True:
         size = min(100, limit - count) if limit else 100
         if size <= 0:
             break
-        data = api.get("/activitylist-service/activities/search/activities", {"start": offset, "limit": size})
+        params = {"start": offset, "limit": size}
+        if include_children:
+            params["excludeChildren"] = "false"
+        data = api.get("/activitylist-service/activities/search/activities", params)
         if not isinstance(data, list):
             raise RuntimeError("Unexpected activity list response")
         with store.db:
@@ -107,6 +110,42 @@ def sync_activities(api, store, root, refresh_days=7, limit=None, refresh=False)
     return imported
 
 
+def sync_activity_workouts(api, store, refresh_days=7, limit=None, refresh=False):
+    """Archive each activity's performed workouts, independently of original files."""
+    cutoff = refresh_cutoff(refresh_days)
+    rows = store.db.execute(
+        "SELECT activity_id,start_time_local FROM activities ORDER BY start_time_local DESC,activity_id DESC"
+    ).fetchall()
+    if limit:
+        rows = rows[:limit]
+    completed, skipped = 0, 0
+    for aid, day in rows:
+        key = str(aid)
+        task = f"activity_workouts:{key}"
+        checkpoint = store.db.execute(
+            "SELECT 1 FROM api_responses WHERE dataset='activity_workouts' AND request_key=?", (key,)
+        ).fetchone()
+        failed = store.db.execute("SELECT 1 FROM sync_errors WHERE task=?", (task,)).fetchone()
+        if checkpoint and not failed and not refresh and (cutoff is None or (day or "")[:10] < cutoff):
+            skipped += 1
+            continue
+        try:
+            data = api.get(f"/activity-service/activity/{aid}/workouts")
+            if not isinstance(data, list):
+                raise RuntimeError("Unexpected activity workouts response")
+            store.response("activity_workouts", key, data)
+            completed += 1
+            if completed <= 3 or completed % 25 == 0:
+                print(f"Activity workouts: {completed} fetched, {skipped} already present", flush=True)
+        except (ApiError, RuntimeError) as error:
+            if isinstance(error, ApiError) and error.status in (401, 403, 429):
+                raise
+            store.error(task, error)
+            print(f"Activity workouts {aid}: incomplete; will retry next run", flush=True)
+    print(f"Activity workouts: {completed} fetched, {skipped} already present", flush=True)
+    return completed
+
+
 def sync_wellness(
     api, store, start, end, refresh_days=7, refresh=False, detailed=False, datasets=None, discover_start=False
 ):
@@ -120,7 +159,7 @@ def sync_wellness(
     requests_done = 0
     for dataset in sorted(wanted, key=lambda x: (x != "daily", x)):
         dataset_start = start
-        if discover_start and dataset not in ("daily", "weight", "weight_goals"):
+        if discover_start and dataset not in ("daily", "weight", "weight_entries", "weight_goals"):
             first = store.db.execute(
                 "SELECT min(calendar_date) FROM wellness_records WHERE dataset='daily' AND json_extract(payload_json,'$.includesWellnessData')=1"
             ).fetchone()[0]
@@ -159,7 +198,10 @@ def sync_wellness(
             else:
                 path, date_param = DETAIL_DATASETS[dataset]
                 path = path.format(day=a)
-                params = {date_param: a} if date_param else None
+                params = dict(DETAIL_PARAMS.get(dataset, {}))
+                if date_param:
+                    params[date_param] = a
+                params = params or None
             try:
                 data = api.get(path, params)
                 store.response(dataset, key, data, a, b)

@@ -13,7 +13,7 @@ from pathlib import Path
 from .api import Api
 from .config import DEFAULT_KEY, DEFAULT_ROOT
 from .storage import Store, status
-from .sync import sync_activities, sync_activity_list, sync_wellness
+from .sync import sync_activities, sync_activity_list, sync_activity_workouts, sync_wellness
 from .util import atomic_write, dumps, now
 from .validation import check_store
 
@@ -33,9 +33,17 @@ def run(argv=None):
     parser.add_argument("--skip-activities", action="store_true")
     parser.add_argument("--skip-health", action="store_true")
     parser.add_argument(
+        "--all-data",
+        action="store_true",
+        help="Fetch every documented read endpoint, including daily details, workouts and child activities",
+    )
+    parser.add_argument(
+        "--activity-workouts", action="store_true", help="Archive performed activity workouts"
+    )
+    parser.add_argument(
         "--daily-details",
         action="store_true",
-        help="Also fetch daily HR/sleep/HRV/SpO2/nutrition/fitness-age detail",
+        help="Also fetch all supported detailed daily health endpoints",
     )
     parser.add_argument(
         "--datasets", help="Comma-separated health datasets; default all range-summary datasets"
@@ -57,6 +65,8 @@ def run(argv=None):
         parser.error("Limits must be positive; delay/refresh-days cannot be negative")
     if args.start and args.start > args.end:
         parser.error("--start must be on/before --end")
+    if args.all_data and args.datasets:
+        parser.error("--all-data cannot be combined with a dataset subset")
     if args.datasets:
         from .datasets import DETAIL_DATASETS, RANGE_DATASETS
 
@@ -93,7 +103,7 @@ def run(argv=None):
             api = Api(args.api_key_file, args.delay)
             api.authenticate()
             if not args.skip_activities:
-                sync_activity_list(api, store, args.activity_limit)
+                sync_activity_list(api, store, args.activity_limit, include_children=args.all_data)
             if not args.skip_health:
                 earliest = store.db.execute("SELECT min(start_time_local) FROM activities").fetchone()[0]
                 start = args.start or (
@@ -113,12 +123,14 @@ def run(argv=None):
                     args.end,
                     args.refresh_days,
                     args.refresh,
-                    args.daily_details,
+                    args.daily_details or args.all_data,
                     args.datasets,
                     discover_start=args.start is None,
                 )
             if not args.skip_activities:
                 sync_activities(api, store, root, args.refresh_days, args.activity_limit, args.refresh)
+                if args.activity_workouts or args.all_data:
+                    sync_activity_workouts(api, store, args.refresh_days, args.activity_limit, args.refresh)
             report = status(store)
             atomic_write(root / "last-sync.json", dumps({"finished_at": now(), **report}).encode())
             print(json.dumps(report, indent=2), flush=True)

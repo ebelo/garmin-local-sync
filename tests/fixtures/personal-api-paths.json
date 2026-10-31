@@ -1,0 +1,32 @@
+{
+  "source": "https://developer.garmin.com/gc-developer-program/personal/swagger-docs/",
+  "api_version": "1.0.0",
+  "get_paths": [
+    "/activity-service/activity/{activityId}",
+    "/activity-service/activity/{activityId}/workouts",
+    "/activitylist-service/activities/search/activities",
+    "/biometric-service/heartRateZones/v2",
+    "/download-service/files/activity/{activityId}",
+    "/fitnessage-service/fitnessage/v2/{calendarDate}",
+    "/goal-service/goal/user/effective/weightgoal/{startDate}/{endDate}",
+    "/hrv-service/hrv/daily/{fromDate}/{toDate}",
+    "/hrv-service/hrv/{calendarDate}",
+    "/nutrition-service/food/logs/{date}",
+    "/periodichealth-service/menstrualcycle/dayview/{calendarDate}",
+    "/periodichealth-service/menstrualcycle/summary/{calendarDate}",
+    "/sleep-service/sleep/dailySleep",
+    "/sleep-service/sleep/dailySleepSummariesByDate",
+    "/userprofile-service/userprofile/settings",
+    "/usersummary-service/stats/hydration/daily/{startDate}/{endDate}",
+    "/usersummary-service/stats/steps/daily/{startDate}/{endDate}",
+    "/usersummary-service/stats/stress/daily/{startDate}/{endDate}",
+    "/usersummary-service/usersummary/daily",
+    "/usersummary-service/v2/dailysummaries",
+    "/weight-service/weight/all/{startDate}/{endDate}",
+    "/weight-service/weight/range/{startDate}/{endDate}",
+    "/wellness-service/wellness/bodyBattery/reports/daily",
+    "/wellness-service/wellness/daily/spo2acclimation/{calendarDate}",
+    "/wellness-service/wellness/dailyHeartRate",
+    "/wellnessactivity-service/activity/summary/range/{fromDate}/{untilDate}"
+  ]
+}
