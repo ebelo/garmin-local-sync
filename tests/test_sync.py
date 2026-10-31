@@ -68,7 +68,8 @@ def test_summary_refresh_preserves_import_checkpoint(store):
     with store.db:
         store.save_summary(changed)
     name, synced = store.db.execute("SELECT name,samples_synced_at FROM activities").fetchone()
-    assert name == "Renamed" and synced
+    assert name == "Renamed"
+    assert synced
 
 
 def test_account_key_change_cannot_mix_different_owners(store):
@@ -209,7 +210,8 @@ def test_fit_time_metadata_serializes():
 
 def test_null_enhanced_fit_fields_fall_back_to_legacy_measurements():
     row = sample_row(1, 0, {"enhanced_altitude": None, "altitude": 500, "enhanced_speed": None, "speed": 3.5})
-    assert row[5] == 500 and row[7] == 3.5
+    assert row[5] == 500
+    assert row[7] == 3.5
 
 
 def test_multiple_wellness_activities_on_same_day_are_preserved(store):

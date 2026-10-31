@@ -23,6 +23,21 @@ class ApiError(RuntimeError):
         super().__init__(f"Garmin HTTP {status}: {path}")
 
 
+def retry_delay(response, attempt):
+    retry = response.headers.get("Retry-After", "")
+    fallback = min(2 ** (attempt + 1), 60)
+    try:
+        wait = float(retry)
+    except ValueError:
+        try:
+            wait = email.utils.parsedate_to_datetime(retry).timestamp() - time.time()
+        except (ValueError, TypeError):
+            wait = fallback
+    if not math.isfinite(wait) or wait < 0:
+        return fallback
+    return wait
+
+
 class Api:
     def __init__(self, key_file=DEFAULT_KEY, delay=1.0):
         self.key_file = Path(key_file).expanduser()
@@ -67,25 +82,19 @@ class Api:
                 time.sleep(min(2**attempt, 30))
                 continue
             if r.status_code == 429 or r.status_code >= 500:
-                if attempt == 6 or (r.status_code >= 500 and attempt >= 2):
-                    raise ApiError(r.status_code, path)
-                retry = r.headers.get("Retry-After", "")
-                try:
-                    wait = float(retry)
-                except ValueError:
-                    try:
-                        wait = email.utils.parsedate_to_datetime(retry).timestamp() - time.time()
-                    except (ValueError, TypeError):
-                        wait = min(2 ** (attempt + 1), 60)
-                if not math.isfinite(wait) or wait < 0:
-                    wait = min(2 ** (attempt + 1), 60)
-                if wait > 300:
-                    raise RuntimeError("Garmin requested a long cooldown; rerun later to resume")
-                print(f"Garmin HTTP {r.status_code}; retrying in {max(0, wait):.0f}s", flush=True)
-                time.sleep(max(0, wait))
+                self._wait_for_retry(r, attempt, path)
                 continue
             return r
         raise RuntimeError("Retry budget exhausted")
+
+    def _wait_for_retry(self, response, attempt, path):
+        if attempt == 6 or (response.status_code >= 500 and attempt >= 2):
+            raise ApiError(response.status_code, path)
+        wait = retry_delay(response, attempt)
+        if wait > 300:
+            raise RuntimeError("Garmin requested a long cooldown; rerun later to resume")
+        print(f"Garmin HTTP {response.status_code}; retrying in {max(0, wait):.0f}s", flush=True)
+        time.sleep(max(0, wait))
 
     def authenticate(self, force=False):
         if not force and self.token and self.expires > time.time() + 300:

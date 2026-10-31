@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2 — unreleased
+
+- Resolve Sonar maintainability findings by separating decoding, validation,
+  geographic path building, health-window retries and CLI/backfill dispatch.
+- Preserve source observations, schema version 2, retry/checkpoint semantics and
+  existing CLI/compatibility APIs; add focused retry and backfill regression tests.
+- Improve test assertion diagnostics and isolate exception-under-test calls.
+
 ## 0.2.1 — unreleased
 
 - Add a shared local/CI Python quality gate with lint/format, package-wide type

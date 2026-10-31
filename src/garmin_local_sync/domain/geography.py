@@ -19,47 +19,62 @@ def valid_coords(lat, lon):
     )
 
 
+def date_line_edge(previous: Coordinate, point: Coordinate) -> Coordinate:
+    adjusted_lon = point.longitude + (360 if point.longitude < previous.longitude else -360)
+    boundary = 180.0 if adjusted_lon > previous.longitude else -180.0
+    fraction = (boundary - previous.longitude) / (adjusted_lon - previous.longitude)
+    latitude = previous.latitude + fraction * (point.latitude - previous.latitude)
+    return Coordinate(boundary, latitude)
+
+
+class TrackBuilder:
+    """Accumulate valid paths, retaining gaps and splitting date-line crossings."""
+
+    def __init__(self):
+        self.tracks: list[tuple[Coordinate, ...]] = []
+        self.points: list[Coordinate] = []
+        self.first: Coordinate | None = None
+
+    def finish(self):
+        if len(self.points) >= 2:
+            self.tracks.append(tuple(self.points))
+        self.points = []
+
+    def add(self, point: Coordinate):
+        if self.first is None:
+            self.first = point
+        if self.points and abs(point.longitude - self.points[-1].longitude) > 180:
+            edge = date_line_edge(self.points[-1], point)
+            if self.points[-1] != edge:
+                self.points.append(edge)
+            self.finish()
+            self.points = [Coordinate(-edge.longitude, edge.latitude)]
+        if not self.points or self.points[-1] != point:
+            self.points.append(point)
+
+
+def starts_new_segment(sample: Sample, previous_segment, previous_time):
+    return (previous_segment is not None and sample.segment_index != previous_segment) or (
+        sample.timestamp_utc and previous_time and sample.timestamp_utc < previous_time
+    )
+
+
 def build_geography(samples: Iterable[Sample], fallback: Coordinate | None = None) -> ActivityGeography:
-    tracks: list[tuple[Coordinate, ...]] = []
-    points: list[Coordinate] = []
-    first = None
+    builder = TrackBuilder()
     previous_segment = None
     previous_time = None
-
-    def finish():
-        nonlocal points
-        if len(points) >= 2:
-            tracks.append(tuple(points))
-        points = []
 
     for sample in samples:
         timestamp, lat, lon = sample.timestamp_utc, sample.latitude, sample.longitude
         segment = sample.segment_index
-        if (previous_segment is not None and segment != previous_segment) or (
-            timestamp and previous_time and timestamp < previous_time
-        ):
-            finish()
+        if starts_new_segment(sample, previous_segment, previous_time):
+            builder.finish()
         previous_segment, previous_time = segment, timestamp
         if lat is None or lon is None or not valid_coords(lat, lon):
-            finish()
+            builder.finish()
             continue
-        point = Coordinate(lon, lat)
-        if first is None:
-            first = point
-        if points and abs(lon - points[-1].longitude) > 180:
-            old_lon, old_lat = points[-1].longitude, points[-1].latitude
-            adjusted_lon = lon + (360 if lon < old_lon else -360)
-            boundary = 180.0 if adjusted_lon > old_lon else -180.0
-            fraction = (boundary - old_lon) / (adjusted_lon - old_lon)
-            boundary_lat = old_lat + fraction * (lat - old_lat)
-            edge = Coordinate(boundary, boundary_lat)
-            if points[-1] != edge:
-                points.append(edge)
-            finish()
-            points = [Coordinate(-boundary, boundary_lat)]
-        if not points or points[-1] != point:
-            points.append(point)
-    finish()
-    if first is None and fallback and valid_coords(fallback.latitude, fallback.longitude):
-        first = fallback
-    return ActivityGeography(tuple(tracks), first)
+        builder.add(Coordinate(lon, lat))
+    builder.finish()
+    if builder.first is None and fallback and valid_coords(fallback.latitude, fallback.longitude):
+        builder.first = fallback
+    return ActivityGeography(tuple(builder.tracks), builder.first)

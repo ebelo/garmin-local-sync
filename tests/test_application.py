@@ -172,13 +172,47 @@ def test_failed_range_splits_then_reuses_successful_subrange_coverage():
     assert len(source.health_requests) == 7
 
 
+def test_split_range_still_saves_right_half_when_left_half_fails():
+    class Source(MemorySource):
+        def health(self, dataset, window):
+            self.health_requests.append((dataset, window))
+            if window.start != window.end:
+                raise SourceError(FailureKind.TRANSIENT, "Split this range")
+            if window.start == "2020-01-01":
+                raise SourceError(FailureKind.OTHER, "One incomplete day")
+            return {"calendarDate": window.start}
+
+    repo, source = MemoryRepository(), Source()
+    start, end = dt.date(2020, 1, 1), dt.date(2020, 1, 2)
+    assert sync_wellness(source, repo, start, end, datasets="daily", refresh_days=0) == 1
+    assert repo.has_response("daily", "2020-01-02/2020-01-02")
+    assert repo.has_failure("daily:2020-01-01/2020-01-01")
+    assert len(source.health_requests) == 3
+
+
+def test_five_consecutive_daily_failures_stop_with_honest_retry_records():
+    class Source(MemorySource):
+        def health(self, dataset, window):
+            self.health_requests.append((dataset, window))
+            raise SourceError(FailureKind.OTHER, "Source rejected one day")
+
+    repo, source = MemoryRepository(), Source()
+    start, end = dt.date(2020, 1, 1), dt.date(2020, 1, 9)
+    with pytest.raises(RuntimeError, match="Repeated source failures"):
+        sync_wellness(source, repo, start, end, datasets="heart_rate", refresh_days=0)
+    assert len(source.health_requests) == 5
+    assert len(repo.failures) == 5
+    assert not repo.responses
+
+
 def test_manual_missing_original_is_complete_but_real_missing_file_is_not():
     repo, archives, source = MemoryRepository(), MemoryArchives(), MemorySource()
     repo.save_summaries([ActivitySummary(2)])
     source.activity_detail = lambda _: ActivityDetail({}, manual=True)
     assert sync_activities(source, repo, archives, Decoder(), refresh_days=0) == 1
     assert repo.imports[2].source_format == "manual"
-    assert not repo.imports[2].samples and not repo.failures
+    assert not repo.imports[2].samples
+    assert not repo.failures
 
 
 @pytest.mark.parametrize("kind", [FailureKind.AUTHENTICATION, FailureKind.PERMISSION, FailureKind.RATE_LIMIT])
@@ -188,8 +222,10 @@ def test_fatal_source_errors_stop_without_claiming_successful_coverage(kind):
             raise SourceError(kind, "Stop without checkpoint")
 
     repo = MemoryRepository()
+    source = Source()
+    day = dt.date(2020, 1, 1)
     with pytest.raises(SourceError):
-        sync_wellness(Source(), repo, dt.date(2020, 1, 1), dt.date(2020, 1, 1), datasets="daily")
+        sync_wellness(source, repo, day, day, datasets="daily")
     assert not repo.responses
 
 
@@ -239,5 +275,6 @@ def test_pure_geography_retains_gaps_and_does_not_invent_stationary_lines():
     ],
 )
 def test_invalid_sync_options_are_rejected_for_non_cli_drivers_too(overrides):
+    end = dt.date(2020, 1, 1)
     with pytest.raises(ValueError):
-        SyncOptions(end=dt.date(2020, 1, 1), **overrides)
+        SyncOptions(end=end, **overrides)

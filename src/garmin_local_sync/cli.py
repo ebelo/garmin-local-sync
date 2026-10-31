@@ -23,8 +23,7 @@ from .domain.models import SyncOptions
 from .util import atomic_write, dumps, now
 
 
-def run(argv=None):
-    os.umask(0o077)
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["sync", "status", "check"], nargs="?", default="sync")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Private archive/data directory")
@@ -78,60 +77,75 @@ def run(argv=None):
         unknown = set(args.datasets.split(",")) - RANGE_DATASETS.keys() - DETAIL_DATASETS.keys()
         if unknown:
             parser.error("Unknown datasets: " + ", ".join(sorted(unknown)))
+    return args
+
+
+@contextlib.contextmanager
+def database_lock(database, read_only):
+    lockpath = database.with_suffix(database.suffix + ".lock")
+    if read_only and not lockpath.exists():
+        yield
+        return
+    if not read_only:
+        lockpath.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    mode = "r" if read_only else "a"
+    with lockpath.open(mode) as lock:
+        try:
+            fcntl.flock(lock, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Another sync/check is using this GeoPackage") from None
+        yield
+
+
+def execute(args, root, store):
+    if args.command == "status":
+        print(json.dumps(status(store), indent=2))
+        return 0
+    if args.command == "check":
+        report = check_store(store)
+        print(json.dumps(report, indent=2))
+        return 0 if report["valid"] else 1
+    api = Api(args.api_key_file, args.delay)
+    api.authenticate()
+    service = SyncService(
+        GarminSource(api),
+        store,
+        FileArchiveStore(root),
+        OriginalActivityDecoder(),
+        progress=lambda message: print(message, flush=True),
+    )
+    report = service.run(
+        SyncOptions(
+            end=args.end,
+            start=args.start,
+            activity_limit=args.activity_limit,
+            skip_activities=args.skip_activities,
+            skip_health=args.skip_health,
+            all_data=args.all_data,
+            activity_workouts=args.activity_workouts,
+            daily_details=args.daily_details,
+            datasets=args.datasets,
+            refresh_days=args.refresh_days,
+            refresh=args.refresh,
+        )
+    )
+    atomic_write(root / "last-sync.json", dumps({"finished_at": now(), **report}).encode())
+    print(json.dumps(report, indent=2), flush=True)
+    return 2 if report["sync_errors"] else 0
+
+
+def run(argv=None):
+    os.umask(0o077)
+    args = parse_args(argv)
     root = args.root.expanduser().resolve()
     read_only = args.command in ("status", "check")
     database = args.database.expanduser().resolve() if args.database else root / "garmin.gpkg"
-    lockpath = database.with_suffix(database.suffix + ".lock")
     if not read_only:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        lockpath.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    lock_context = (
-        lockpath.open("r" if read_only else "a")
-        if lockpath.exists() or not read_only
-        else contextlib.nullcontext(None)
-    )
-    with lock_context as lock:
-        if lock is not None:
-            try:
-                fcntl.flock(lock, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise RuntimeError("Another sync/check is using this GeoPackage") from None
+    with database_lock(database, read_only):
         store = Store(database, read_only=read_only)
         try:
-            if args.command == "status":
-                print(json.dumps(status(store), indent=2))
-                return 0
-            if args.command == "check":
-                report = check_store(store)
-                print(json.dumps(report, indent=2))
-                return 0 if report["valid"] else 1
-            api = Api(args.api_key_file, args.delay)
-            api.authenticate()
-            service = SyncService(
-                GarminSource(api),
-                store,
-                FileArchiveStore(root),
-                OriginalActivityDecoder(),
-                progress=lambda message: print(message, flush=True),
-            )
-            report = service.run(
-                SyncOptions(
-                    end=args.end,
-                    start=args.start,
-                    activity_limit=args.activity_limit,
-                    skip_activities=args.skip_activities,
-                    skip_health=args.skip_health,
-                    all_data=args.all_data,
-                    activity_workouts=args.activity_workouts,
-                    daily_details=args.daily_details,
-                    datasets=args.datasets,
-                    refresh_days=args.refresh_days,
-                    refresh=args.refresh,
-                )
-            )
-            atomic_write(root / "last-sync.json", dumps({"finished_at": now(), **report}).encode())
-            print(json.dumps(report, indent=2), flush=True)
-            return 2 if report["sync_errors"] else 0
+            return execute(args, root, store)
         finally:
             store.close()
 

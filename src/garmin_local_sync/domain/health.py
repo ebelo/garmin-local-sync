@@ -37,24 +37,32 @@ def flatten_numbers(value, prefix=""):
         yield prefix, value
 
 
-def normalize_response(dataset, key, data, window: DateWindow | None = None):
+def response_day(dataset, record, window: DateWindow | None):
     start, end = (window.start, window.end) if window else (None, None)
+    day = record_date(record)
+    if start == end and (dataset in DETAIL_DATASETS or day is None):
+        return start
+    return day
+
+
+def response_key(dataset, key, record, day, index, multiple):
+    rid = str(day or record.get("id") or record.get("uuid") or f"{key}:{index}")
+    if dataset in DETAIL_DATASETS and multiple:
+        return f"{rid}:{record.get('id', index)}"
+    if dataset == "wellness_activities":
+        identity = record.get("activityUuid")
+        if isinstance(identity, dict):
+            identity = identity.get("uuid")
+        return str(identity or f"{rid}:{index}")
+    if dataset == "weight_entries":
+        identity = record.get("id") or record.get("timestampGMT") or record.get("date")
+        return f"{day}:{identity if identity is not None else index}"
+    return rid
+
+
+def normalize_response(dataset, key, data, window: DateWindow | None = None):
     entries = records(data)
     for index, record in enumerate(entries):
-        day = record_date(record)
-        if dataset in DETAIL_DATASETS and start == end:
-            day = start
-        if day is None and start == end:
-            day = start
-        rid = str(day or record.get("id") or record.get("uuid") or f"{key}:{index}")
-        if dataset in DETAIL_DATASETS and len(entries) > 1:
-            rid = f"{rid}:{record.get('id', index)}"
-        if dataset == "wellness_activities":
-            identity = record.get("activityUuid")
-            if isinstance(identity, dict):
-                identity = identity.get("uuid")
-            rid = str(identity or f"{rid}:{index}")
-        if dataset == "weight_entries":
-            identity = record.get("id") or record.get("timestampGMT") or record.get("date")
-            rid = f"{day}:{identity if identity is not None else index}"
+        day = response_day(dataset, record, window)
+        rid = response_key(dataset, key, record, day, index, len(entries) > 1)
         yield WellnessRecord(rid, day, record, tuple(flatten_numbers(record)) if day else ())

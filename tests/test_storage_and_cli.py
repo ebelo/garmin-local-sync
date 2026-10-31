@@ -34,7 +34,8 @@ def test_inspection_does_not_modify_bytes_permissions_or_create_a_lock(tmp_path)
     before, mode = digest(path), path.stat().st_mode
     assert main(["status", "--database", str(path)]) == 0
     assert main(["check", "--database", str(path)]) == 0
-    assert digest(path) == before and path.stat().st_mode == mode
+    assert digest(path) == before
+    assert path.stat().st_mode == mode
     assert not path.with_suffix(".gpkg.lock").exists()
 
 
@@ -98,7 +99,8 @@ def test_invalid_dataset_is_rejected_before_any_database_write(tmp_path):
     root = tmp_path / "data"
     with pytest.raises(SystemExit) as exc:
         main(["sync", "--root", str(root), "--datasets", "not-a-dataset"])
-    assert exc.value.code == 2 and not root.exists()
+    assert exc.value.code == 2
+    assert not root.exists()
 
 
 def test_console_error_is_concise_and_does_not_reveal_a_credential(tmp_path, capsys):
@@ -106,7 +108,8 @@ def test_console_error_is_concise_and_does_not_reveal_a_credential(tmp_path, cap
     key = tmp_path / "missing-key"
     assert main(["sync", "--root", str(root), "--api-key-file", str(key)]) == 1
     captured = capsys.readouterr()
-    assert "Sync stopped:" in captured.err and "Traceback" not in captured.err
+    assert "Sync stopped:" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_no_key_or_token_is_written_into_an_example_database(tmp_path):

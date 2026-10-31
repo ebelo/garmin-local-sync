@@ -27,7 +27,8 @@ def rows(points):
 @pytest.mark.parametrize("a,b", [(179, -179), (-179, 179), (180, -179), (-180, 179)])
 def test_date_line_splits_short_crossing_in_both_directions(a, b):
     track, _ = activity_geometries(rows([(a, 10, 0), (b, 12, 0)]))
-    assert track is not None and track.IsValid()
+    assert track is not None
+    assert track.IsValid()
     for segment in coordinates(track):
         assert all(abs(x[0] - y[0]) <= 180 for x, y in pairwise(segment))
     assert math.isclose(
@@ -104,7 +105,8 @@ def test_xml_time_without_offset_is_not_invented_as_utc():
 
 def test_original_xml_with_utf8_bom_is_detected():
     rows, _, fmt = parse_archive(b'\xef\xbb\xbf<gpx><trkpt lat="1" lon="2"/></gpx>', 1)
-    assert fmt == "xml" and rows[0][3:5] == (1, 2)
+    assert fmt == "xml"
+    assert rows[0][3:5] == (1, 2)
 
 
 def test_malformed_xml_is_a_recoverable_item_error():
@@ -124,8 +126,9 @@ def test_xml_entities_are_rejected_as_recoverable_decode_errors(declaration):
     from garmin_local_sync.domain.errors import DecodeError
 
     blob = f'<!DOCTYPE gpx [{declaration}]><gpx><trkpt lat="1" lon="2"><name>&secret;</name></trkpt></gpx>'.encode()
+    decoder = OriginalActivityDecoder()
     with pytest.raises(DecodeError, match="Invalid GPX/TCX XML"):
-        OriginalActivityDecoder().decode(blob, 1)
+        decoder.decode(blob, 1)
 
 
 def test_fit_semicircles_altitude_and_timer_stop_with_real_binary_decoder():
@@ -162,9 +165,11 @@ def test_fit_semicircles_altitude_and_timer_stop_with_real_binary_decoder():
     blob = head + data
     blob += struct.pack("<H", compute_crc(blob))
     samples, messages, fmt = parse_archive(blob, 1)
-    assert fmt == "fit" and len(samples) == 4
+    assert fmt == "fit"
+    assert len(samples) == 4
     assert samples[0][3:5] == pytest.approx((45, 90), abs=1e-6)
-    assert samples[0][5] == 100 and samples[1][5] is None
+    assert samples[0][5] == 100
+    assert samples[1][5] is None
     assert [s[13] for s in samples] == [0, 0, 1, 1]
     assert samples[0][2].endswith("+00:00")
     assert any(m[2] == "event" for m in messages)
@@ -181,7 +186,8 @@ def test_example_passes_independent_gdal_conformance_validator(tmp_path):
 
     path = tmp_path / "example.gpkg"
     result = create_example(path)
-    assert result["activity_samples"] == 8 and result["activity_tracks"] == 2
+    assert result["activity_samples"] == 8
+    assert result["activity_tracks"] == 2
     assert result["check"]["valid"]
     assert not check(str(path), extra_checks=True, warning_as_error=True)
 

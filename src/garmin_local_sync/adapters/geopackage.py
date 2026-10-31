@@ -89,44 +89,37 @@ class GeoPackageRepository:
         self.read_only = read_only
         existing = self.path.exists()
         version = None
-        if read_only and not existing:
-            raise FileNotFoundError("GeoPackage does not exist; run sync first or select --database")
         if existing or read_only:
-            self.db = sqlite3.connect(
-                "file:" + quote(str(self.path), safe="/") + "?mode=ro", uri=True, timeout=60
-            )
-            try:
-                if self.db.execute("PRAGMA application_id").fetchone()[0] != 0x47504B47:
-                    raise RuntimeError("Not a GeoPackage; refusing to modify this file")
-                versions = self.db.execute("SELECT version FROM schema_version").fetchall()
-                if len(versions) != 1 or versions[0][0] not in (1, SCHEMA_VERSION):
-                    raise RuntimeError("Unsupported database schema version")
-                version = versions[0][0]
-                self.db.execute("SELECT activity_id,summary_json FROM activities LIMIT 0")
-            except (sqlite3.DatabaseError, RuntimeError) as error:
-                self.db.close()
-                if isinstance(error, RuntimeError):
-                    raise
-                raise RuntimeError("Not a supported garmin-local-sync GeoPackage") from None
+            version = self._open_existing()
             if read_only:
                 return
             self.db.close()
+        self._initialize(version, existing)
+
+    def _open_existing(self):
+        if not self.path.exists():
+            raise FileNotFoundError("GeoPackage does not exist; run sync first or select --database")
+        self.db = sqlite3.connect(
+            "file:" + quote(str(self.path), safe="/") + "?mode=ro", uri=True, timeout=60
+        )
+        try:
+            if self.db.execute("PRAGMA application_id").fetchone()[0] != 0x47504B47:
+                raise RuntimeError("Not a GeoPackage; refusing to modify this file")
+            versions = self.db.execute("SELECT version FROM schema_version").fetchall()
+            if len(versions) != 1 or versions[0][0] not in (1, SCHEMA_VERSION):
+                raise RuntimeError("Unsupported database schema version")
+            self.db.execute("SELECT activity_id,summary_json FROM activities LIMIT 0")
+            return versions[0][0]
+        except (sqlite3.DatabaseError, RuntimeError) as error:
+            self.db.close()
+            if isinstance(error, RuntimeError):
+                raise
+            raise RuntimeError("Not a supported garmin-local-sync GeoPackage") from None
+
+    def _initialize(self, version, existing):
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         if not existing:
-            ds = ogr.GetDriverByName("GPKG").CreateDataSource(str(self.path), options=["VERSION=1.3"])
-            srs = osr.SpatialReference()
-            srs.ImportFromEPSG(4326)
-            srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-            for name, geom_type in [
-                ("activity_tracks", ogr.wkbMultiLineString),
-                ("activity_starts", ogr.wkbPoint),
-            ]:
-                layer = ds.CreateLayer(name, srs, geom_type, options=["SPATIAL_INDEX=YES"])
-                layer.CreateField(ogr.FieldDefn("activity_id", ogr.OFTInteger64))
-                layer.CreateField(ogr.FieldDefn("start_time", ogr.OFTString))
-                layer.CreateField(ogr.FieldDefn("activity_type", ogr.OFTString))
-                ds.ExecuteSQL(f'CREATE UNIQUE INDEX "idx_{name}_id" ON "{name}"(activity_id)')
-            ds = None
+            self._create_spatial_layers()
         os.chmod(self.path, 0o600)
         self.db = sqlite3.connect(self.path, timeout=60)
         self.db.execute("PRAGMA foreign_keys=ON")
@@ -157,6 +150,22 @@ class GeoPackageRepository:
             "SELECT json_extract(summary_json,'$.ownerId') FROM activities WHERE json_extract(summary_json,'$.ownerId') IS NOT NULL LIMIT 1"
         ).fetchone()
         self.owner_id = previous_owner[0] if previous_owner else None
+
+    def _create_spatial_layers(self):
+        ds = ogr.GetDriverByName("GPKG").CreateDataSource(str(self.path), options=["VERSION=1.3"])
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(4326)
+        srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        for name, geom_type in [
+            ("activity_tracks", ogr.wkbMultiLineString),
+            ("activity_starts", ogr.wkbPoint),
+        ]:
+            layer = ds.CreateLayer(name, srs, geom_type, options=["SPATIAL_INDEX=YES"])
+            layer.CreateField(ogr.FieldDefn("activity_id", ogr.OFTInteger64))
+            layer.CreateField(ogr.FieldDefn("start_time", ogr.OFTString))
+            layer.CreateField(ogr.FieldDefn("activity_type", ogr.OFTString))
+            ds.ExecuteSQL(f'CREATE UNIQUE INDEX "idx_{name}_id" ON "{name}"(activity_id)')
+        ds = None
 
     def close(self):
         if not self.read_only and self.db.total_changes:

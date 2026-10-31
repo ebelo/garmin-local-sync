@@ -125,20 +125,28 @@ def main():
     if args.command == "worker":
         return worker(root, args.delay, args.api_key_file, args.all_data, args.refresh_days)
     if args.command == "status":
-        if report_path.exists():
-            report = json.loads(report_path.read_text())
-            if report.get("status") == "running":
-                try:
-                    os.kill(report["pid"], 0)
-                    command = Path(f"/proc/{report['pid']}/cmdline").read_bytes()
-                    if b"garmin_local_sync.backfill" not in command:
-                        report["status"] = "interrupted"
-                except (ProcessLookupError, FileNotFoundError):
-                    report["status"] = "interrupted"
-            print(json.dumps(report, indent=2))
-        else:
-            print("No detached backfill has been started")
+        print_status(report_path)
         return 0
+    return start_detached(args, root, log_path, report_path)
+
+
+def print_status(report_path):
+    if not report_path.exists():
+        print("No detached backfill has been started")
+        return
+    report = json.loads(report_path.read_text())
+    if report.get("status") == "running":
+        try:
+            os.kill(report["pid"], 0)
+            command = Path(f"/proc/{report['pid']}/cmdline").read_bytes()
+            if b"garmin_local_sync.backfill" not in command:
+                report["status"] = "interrupted"
+        except (ProcessLookupError, FileNotFoundError):
+            report["status"] = "interrupted"
+    print(json.dumps(report, indent=2))
+
+
+def start_detached(args, root, log_path, report_path):
     # The child owns the exclusive lock for its entire lifetime. Check before
     # spawning too, so repeated start commands don't create redundant log writers.
     with (root / "backfill.lock").open("a") as lock:

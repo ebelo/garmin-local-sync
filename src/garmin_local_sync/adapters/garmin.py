@@ -62,11 +62,11 @@ class GarminSource:
         if dataset in RANGE_DATASETS:
             path, mode = RANGE_DATASETS[dataset]
             path = path.format(start=a, end=b)
-            params = (
-                {"startDate": a, "endDate": b}
-                if mode == "params"
-                else ({"includeAll": "true"} if mode == "weight" else None)
-            )
+            params = None
+            if mode == "params":
+                params = {"startDate": a, "endDate": b}
+            elif mode == "weight":
+                params = {"includeAll": "true"}
         else:
             path, date_param = DETAIL_DATASETS[dataset]
             path = path.format(day=a)

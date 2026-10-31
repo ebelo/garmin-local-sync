@@ -86,3 +86,29 @@ def test_long_retry_after_stops_without_sleeping_for_hours(api, monkeypatch):
     )
     with pytest.raises(RuntimeError, match="long cooldown"):
         api._request("GET", "/synthetic")
+
+
+@pytest.mark.parametrize(
+    "header,expected",
+    [
+        ("4", 4),
+        ("Thu, 01 Jan 1970 00:16:48 GMT", 8),
+        ("nan", 2),
+        ("-1", 2),
+        ("not-a-date", 2),
+    ],
+)
+def test_retry_after_formats_and_invalid_values_preserve_retry_policy(api, monkeypatch, header, expected):
+    sleeps = []
+    responses = iter(
+        [
+            SimpleNamespace(status_code=429, headers={"Retry-After": header}),
+            SimpleNamespace(status_code=200),
+        ]
+    )
+    monkeypatch.setattr(http.time, "sleep", sleeps.append)
+    monkeypatch.setattr(http.time, "time", lambda: 1000)
+    monkeypatch.setattr(api.session, "request", lambda *a, **kw: next(responses))
+    response = api._request("GET", "/synthetic")
+    assert response.status_code == 200
+    assert [delay for delay in sleeps if delay > 0] == [expected]

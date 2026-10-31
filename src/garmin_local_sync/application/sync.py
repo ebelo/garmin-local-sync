@@ -9,6 +9,7 @@ from .ports import ActivityDecoder, ActivitySource, ArchiveStore, Progress, Sync
 
 
 def quiet(message: str) -> None:
+    # Default progress sink intentionally discards messages for noninteractive drivers.
     pass
 
 
@@ -60,6 +61,34 @@ def sync_activity_list(
     return count
 
 
+def import_activity(source, repository, archives, decoder, activity, reuse_archive):
+    """Complete one item; return None for a manual activity without an original."""
+    aid = activity.activity_id
+    detail = source.activity_detail(aid)
+    content = archives.read(aid) if reuse_archive else None
+    if content is None:
+        try:
+            content = source.download_activity(aid)
+            archives.write(aid, content)
+        except SourceError as error:
+            if error.missing_file and detail.manual:
+                repository.save_import(aid, detail, DecodedActivity())
+                return None
+            raise
+    decoded = decoder.decode(content, aid)
+    repository.save_import(aid, detail, decoded)
+    return decoded
+
+
+def needs_import(activity, refresh, cutoff):
+    return (
+        refresh
+        or activity.failed
+        or not activity.imported
+        or (cutoff is not None and (activity.start_time_local or "")[:10] >= cutoff)
+    )
+
+
 def sync_activities(
     source: ActivitySource,
     repository: SyncRepository,
@@ -73,35 +102,17 @@ def sync_activities(
 ):
     cutoff = refresh_cutoff(refresh_days, today)
     rows = repository.activity_states(limit)
-    pending = [
-        a
-        for a in rows
-        if refresh
-        or a.failed
-        or not a.imported
-        or (cutoff is not None and (a.start_time_local or "")[:10] >= cutoff)
-    ]
+    pending = [a for a in rows if needs_import(a, refresh, cutoff)]
     progress(f"Activities to import/refresh: {len(pending)}/{len(rows)}")
     imported = 0
     for i, activity in enumerate(pending, 1):
         aid, day = activity.activity_id, activity.start_time_local
         try:
-            detail = source.activity_detail(aid)
-            content = None
-            if not refresh and (cutoff is None or (day or "")[:10] < cutoff):
-                content = archives.read(aid)
-            if content is None:
-                try:
-                    content = source.download_activity(aid)
-                    archives.write(aid, content)
-                except SourceError as error:
-                    if error.missing_file and detail.manual:
-                        repository.save_import(aid, detail, DecodedActivity())
-                        imported += 1
-                        continue
-                    raise
-            decoded = decoder.decode(content, aid)
-            repository.save_import(aid, detail, decoded)
+            reuse = not refresh and (cutoff is None or (day or "")[:10] < cutoff)
+            decoded = import_activity(source, repository, archives, decoder, activity, reuse)
+            if decoded is None:
+                imported += 1
+                continue
             imported += 1
             if i <= 3 or i % 25 == 0 or i == len(pending):
                 progress(
@@ -151,6 +162,82 @@ def sync_activity_workouts(
     return completed
 
 
+class WellnessDatasetSync:
+    """Keep checkpoints and failure counters scoped to one health dataset."""
+
+    def __init__(self, source, repository, dataset, progress, *, cutoff, refresh):
+        self.source, self.repository = source, repository
+        self.dataset, self.progress = dataset, progress
+        self.cutoff, self.refresh = cutoff, refresh
+        self.completed = 0
+        self.skipped = 0
+        self.consecutive_failures = 0
+
+    def fetch(self, start, end):
+        window = DateWindow(start, end)
+        task = f"{self.dataset}:{window.key}"
+        if (
+            not self.repository.has_failure(task)
+            and not self.refresh
+            and (self.cutoff is None or end < self.cutoff)
+            and covered(self.repository, self.dataset, start, end)
+        ):
+            self.skipped += 1
+            return True
+        try:
+            data = self.source.health(self.dataset, window)
+            self.repository.save_response(self.dataset, window.key, data, window)
+            self.completed += 1
+            self.consecutive_failures = 0
+            if self.completed % 25 == 0:
+                self.progress(f"Health {self.dataset}: {self.completed} date windows fetched; through {end}")
+            return True
+        except SourceError as error:
+            return self.failed_window(window, error)
+
+    def failed_window(self, window, error):
+        if error.fatal:
+            raise error
+        if error.can_split_range and window.start < window.end:
+            return self.split_window(window, error)
+        task = f"{self.dataset}:{window.key}"
+        self.repository.record_failure(task, error)
+        self.progress(f"Health {self.dataset} {window.key}: {error.kind.value}; recorded for retry")
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= 5:
+            raise RuntimeError("Repeated source failures; completed data saved, rerun to resume") from error
+        return False
+
+    def split_window(self, window, error):
+        first, last = dt.date.fromisoformat(window.start), dt.date.fromisoformat(window.end)
+        middle = first + (last - first) // 2
+        self.progress(f"Health {self.dataset}: splitting failed range {window.key} ({error.kind.value})")
+        # Both halves must run even when the left half remains incomplete.
+        left = self.fetch(window.start, middle.isoformat())
+        right = self.fetch((middle + dt.timedelta(days=1)).isoformat(), window.end)
+        if left and right:
+            self.repository.clear_failure(f"{self.dataset}:{window.key}")
+        return left and right
+
+
+def wanted_datasets(datasets, detailed):
+    wanted = set(datasets.split(",")) if datasets else set(RANGE_DATASETS)
+    if detailed:
+        wanted.update(DETAIL_DATASETS)
+    unknown = wanted - DATASETS.keys()
+    if unknown:
+        raise RuntimeError("Unknown datasets: " + ", ".join(sorted(unknown)))
+    return sorted(wanted, key=lambda x: (x != "daily", x))
+
+
+def dataset_start_date(repository, dataset, start, discover_start):
+    if discover_start and DATASETS[dataset].discover_from_wellness:
+        first = repository.first_wellness_date()
+        if first:
+            return max(start, first)
+    return start
+
+
 def sync_wellness(
     source: ActivitySource,
     repository: SyncRepository,
@@ -165,67 +252,14 @@ def sync_wellness(
     today=None,
 ):
     cutoff = refresh_cutoff(refresh_days, today)
-    wanted = set(datasets.split(",")) if datasets else set(RANGE_DATASETS)
-    if detailed:
-        wanted.update(DETAIL_DATASETS)
-    unknown = wanted - DATASETS.keys()
-    if unknown:
-        raise RuntimeError("Unknown datasets: " + ", ".join(sorted(unknown)))
     requests_done = 0
-    for dataset in sorted(wanted, key=lambda x: (x != "daily", x)):
-        spec = DATASETS[dataset]
-        dataset_start = start
-        if discover_start and spec.discover_from_wellness:
-            first = repository.first_wellness_date()
-            if first:
-                dataset_start = max(start, first)
-        completed, skipped, consecutive_failures = 0, 0, 0
-
-        def fetch_window(a, b, dataset=dataset):
-            nonlocal completed, skipped, requests_done, consecutive_failures
-            window = DateWindow(a, b)
-            task = f"{dataset}:{window.key}"
-            if (
-                not repository.has_failure(task)
-                and not refresh
-                and (cutoff is None or b < cutoff)
-                and covered(repository, dataset, a, b)
-            ):
-                skipped += 1
-                return True
-            try:
-                data = source.health(dataset, window)
-                repository.save_response(dataset, window.key, data, window)
-                completed += 1
-                requests_done += 1
-                consecutive_failures = 0
-                if completed % 25 == 0:
-                    progress(f"Health {dataset}: {completed} date windows fetched; through {b}")
-                return True
-            except SourceError as error:
-                if error.fatal:
-                    raise
-                if error.can_split_range and a < b:
-                    first, last = dt.date.fromisoformat(a), dt.date.fromisoformat(b)
-                    middle = first + (last - first) // 2
-                    progress(f"Health {dataset}: splitting failed range {a}/{b} ({error.kind.value})")
-                    left = fetch_window(a, middle.isoformat())
-                    right = fetch_window((middle + dt.timedelta(days=1)).isoformat(), b)
-                    if left and right:
-                        repository.clear_failure(task)
-                    return left and right
-                repository.record_failure(task, error)
-                progress(f"Health {dataset} {window.key}: {error.kind.value}; recorded for retry")
-                consecutive_failures += 1
-                if consecutive_failures >= 5:
-                    raise RuntimeError(
-                        "Repeated source failures; completed data saved, rerun to resume"
-                    ) from error
-                return False
-
-        for a, b in intervals(dataset_start, end, spec.window_days):
-            fetch_window(a, b)
-        progress(f"Health {dataset}: {completed} windows fetched, {skipped} already present")
+    for dataset in wanted_datasets(datasets, detailed):
+        dataset_start = dataset_start_date(repository, dataset, start, discover_start)
+        worker = WellnessDatasetSync(source, repository, dataset, progress, cutoff=cutoff, refresh=refresh)
+        for a, b in intervals(dataset_start, end, DATASETS[dataset].window_days):
+            worker.fetch(a, b)
+        requests_done += worker.completed
+        progress(f"Health {dataset}: {worker.completed} windows fetched, {worker.skipped} already present")
     return requests_done
 
 

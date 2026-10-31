@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 from types import SimpleNamespace
 
 from garmin_local_sync import backfill
@@ -50,3 +52,36 @@ def test_worker_reports_process_failure_without_exception_text(monkeypatch, tmp_
     assert report["status"] == "failed"
     assert report["error_type"] == "RuntimeError"
     assert "do not echo" not in (tmp_path / "backfill-status.json").read_text()
+
+
+def test_status_marks_a_reused_non_worker_pid_interrupted(tmp_path, capsys):
+    path = tmp_path / "backfill-status.json"
+    path.write_text(json.dumps({"status": "running", "pid": os.getpid()}))
+    backfill.print_status(path)
+    assert json.loads(capsys.readouterr().out)["status"] == "interrupted"
+    assert json.loads(path.read_text())["status"] == "running"
+
+
+def test_start_dispatch_preserves_all_data_refresh_and_detached_options(tmp_path, monkeypatch):
+    calls = []
+
+    def launch(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(pid=1234)
+
+    monkeypatch.setattr(backfill.subprocess, "Popen", launch)
+    monkeypatch.setattr(
+        sys, "argv", ["backfill", "start", "--root", str(tmp_path), "--all-data", "--refresh-days", "0"]
+    )
+    assert backfill.main() == 0
+    command, options = calls[0]
+    assert "--all-data" in command
+    assert command[command.index("--refresh-days") + 1] == "0"
+    assert options["start_new_session"] is True
+    assert options["close_fds"] is True
+
+
+def test_main_status_without_report_is_readable(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["backfill", "status", "--root", str(tmp_path)])
+    assert backfill.main() == 0
+    assert "No detached backfill" in capsys.readouterr().out
