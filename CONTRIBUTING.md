@@ -21,6 +21,12 @@ All tests must run without a Garmin key or network access. Geographic changes ne
 OGR round-trip assertions and GDAL GeoPackage conformance validation. The synthetic
 example generator is the preferred reproducible fixture, not an account export.
 
+## Package version
+
+`src/garmin_local_sync/__init__.py` is the single source of the package version.
+Setuptools reads `__version__` when building wheel/sdist metadata; the installed-wheel
+smoke check verifies that runtime and distribution versions agree.
+
 ## Quality gate
 
 `python scripts/check_quality.py` runs the same gate locally and in GitHub Actions:
@@ -51,7 +57,7 @@ Bandit suppressions are narrow, documented reviews of fixed SQL identifiers, esc
 metadata identifiers, fixed-interpreter argv subprocesses and a public token URL;
 never add blanket exclusions to silence genuine findings.
 
-The audit excludes this unpublished package itself, the development tools and
+The dependency audit excludes the project itself, the development tools and
 system-managed GDAL. It records the runtime versions actually installed for the wheel;
 it does not certify every version allowed by dependency ranges or the whole host.
 Upgrade OS/GDAL packages through the platform package manager separately.

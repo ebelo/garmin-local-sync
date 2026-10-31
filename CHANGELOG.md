@@ -2,6 +2,11 @@
 
 ## 0.3.0 — unreleased
 
+- Modernize CI to SHA-pinned Node 24 actions with Dependabot updates, skip duplicate
+  branch/PR runs and cancel superseded runs; keep main and version-tag checks.
+- Single-source distribution/runtime version metadata and remove the remaining
+  `Store` naming alias in the CLI.
+
 - **Breaking Python imports:** remove the seven root-level `api`, `datasets`,
   `formats`, `geography`, `storage`, `sync` and `validation` compatibility modules.
   Use explicit `domain`, `application` and `adapters` imports; see the

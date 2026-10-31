@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "garmin-local-sync"
-version = "0.3.0"
+dynamic = ["version"]
 description = "Sync Garmin activity and health data into a local GeoPackage with faithful geography"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -38,6 +38,9 @@ dev = [
 garmin-sync = "garmin_local_sync.cli:main"
 garmin-sync-backfill = "garmin_local_sync.backfill:main"
 garmin-sync-example = "garmin_local_sync.example:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "garmin_local_sync.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -13,8 +13,7 @@ from pathlib import Path
 from .adapters.decoding import OriginalActivityDecoder
 from .adapters.filesystem import FileArchiveStore
 from .adapters.garmin import GarminSource
-from .adapters.geopackage import GeoPackageRepository as Store
-from .adapters.geopackage import status
+from .adapters.geopackage import GeoPackageRepository, status
 from .adapters.http import Api
 from .adapters.validation import check_store
 from .application.sync import SyncService
@@ -143,7 +142,7 @@ def run(argv=None):
     if not read_only:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
     with database_lock(database, read_only):
-        store = Store(database, read_only=read_only)
+        store = GeoPackageRepository(database, read_only=read_only)
         try:
             return execute(args, root, store)
         finally:
