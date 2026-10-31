@@ -1,0 +1,11 @@
+"""Stable defaults. No credentials or user-specific paths belong in source."""
+
+import datetime as dt
+from pathlib import Path
+
+BASE = "https://personal.connectapi.garmin.com"
+TOKEN_PATH = "/personalapitoken-service/personal-api/personal-api-key/token"
+DEFAULT_ROOT = Path.home() / ".local/share/garmin-local-sync"
+DEFAULT_KEY = Path.home() / ".config/garmin/connect-personal-api-key"
+UTC = dt.timezone.utc
+SCHEMA_VERSION = 2

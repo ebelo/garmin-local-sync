@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garmin-local-sync"
+version = "0.1.0"
+description = "Sync Garmin activity and health data into a local GeoPackage with faithful geography"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Emmanuel Belo"}]
+dependencies = ["requests>=2.31,<3", "fitdecode>=0.10,<1"]
+keywords = ["garmin", "geopackage", "fitness", "geospatial", "local-first"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: GIS",
+]
+
+[project.urls]
+Repository = "https://github.com/ebelo/garmin-local-sync"
+Issues = "https://github.com/ebelo/garmin-local-sync/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "build>=1.2,<2"]
+
+[project.scripts]
+garmin-sync = "garmin_local_sync.cli:main"
+garmin-sync-backfill = "garmin_local_sync.backfill:main"
+garmin-sync-example = "garmin_local_sync.example:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

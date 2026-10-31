@@ -1,0 +1,43 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install matching system GDAL and Python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gdal python3-venv
+          /usr/bin/python3 -m venv --system-site-packages .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e '.[dev]'
+      - name: Lint and format
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+      - name: Offline tests and geographic round-trips
+        run: .venv/bin/python -m pytest -q
+      - name: Build distribution
+        run: .venv/bin/python -m build
+      - name: Smoke-test installed wheel outside checkout
+        run: |
+          /usr/bin/python3 -m venv --system-site-packages /tmp/garmin-wheel
+          /tmp/garmin-wheel/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/garmin-wheel/bin/garmin-sync --help
+          /tmp/garmin-wheel/bin/garmin-sync-backfill --help
+          /tmp/garmin-wheel/bin/garmin-sync-example --output /tmp/garmin-example.gpkg
+          /tmp/garmin-wheel/bin/garmin-sync check --database /tmp/garmin-example.gpkg
+          /tmp/garmin-wheel/bin/python -m osgeo_utils.samples.validate_gpkg --extra --warning-as-error /tmp/garmin-example.gpkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-geopackage
+          path: /tmp/garmin-example.gpkg

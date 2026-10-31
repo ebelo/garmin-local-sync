@@ -1,0 +1,19 @@
+# Changelog
+
+## 0.1.0 — unreleased
+
+Initial alpha release candidate:
+
+- Official Garmin Personal API authentication with private key/token files,
+  automatic renewal, bounded retries, and rate-limit handling.
+- Resumable activity/history import into a standards-conformant GeoPackage 1.3.
+- FIT/GPX/TCX decoding, explicit sample segments, preserved original files and JSON.
+- EPSG:4326 tracks/start points, spatial indexes, date-line splitting, and retained
+  sensor elevations without fabricated geometry heights.
+- Health-summary tables, optional daily detail datasets, and local SQL views.
+- Read-only status/geography/integrity checks and a detached one-off backfill runner.
+- Synthetic example generator and offline tests, including independent GDAL validation.
+
+The internal application schema is version 2. Experimental prototype schema-1
+databases migrate on sync write-open; historical geometry needs `--refresh` to be
+regenerated. See [schema and migration notes](docs/schema.md).
