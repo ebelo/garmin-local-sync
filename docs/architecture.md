@@ -61,7 +61,8 @@ Supporting adapters:
 - `http.py` handles credentials, token renewal, HTTPS, throttling and retries.
 - `garmin_routes.py` holds vendor paths and parameters. `GarminSource` translates
   transport errors into domain failure categories and maps source summaries.
-- `mapping.py` converts vendor and legacy storage representations at boundaries.
+- `mapping.py` maps vendor summaries and binds typed samples to SQL rows.
+  Decoding and geometry operate on domain values, not positional database rows.
 - `geometry.py` encodes pure geographic values as OGR geometry. GDAL remains
   responsible for GeoPackage geometry blobs and spatial indexes.
 - `validation.py` performs infrastructure-specific SQLite/OGR conformance checks.
@@ -104,9 +105,25 @@ format. The package is alpha; these internal module paths are not a stable SDK.
 | `garmin_local_sync.validation` | `garmin_local_sync.adapters.validation` |
 
 The former `datasets.RANGE_DAYS` convenience map is no longer exported. Read each
-policy's `window_days` from `domain.datasets.RANGE_DATASETS` instead. Activity
-parser tuple results remain supported by the decoding/persistence adapters; this
-change removes redundant import and composition wrappers, not data conversion.
+policy's `window_days` from `domain.datasets.RANGE_DATASETS` instead.
+
+Version **0.4.0** also removes positional sample/message representations from the
+low-level activity pipeline:
+
+- Replace `sample_row(activity_id, index, values, segment)` with
+  `adapters.decoding.sample_from_values(index, values, segment)`, returning `Sample`.
+- `parse_fit(content, offset=0)` and `parse_xml(content, offset=0)` return typed
+  sample/message lists; the redundant activity-ID argument is removed.
+- `parse_archive(content)` returns `DecodedActivity`, not a `(rows, messages, format)`
+  tuple. Use `.samples`, `.messages` and `.source_format`; samples/messages have
+  named fields rather than positional row indexes.
+- `GeoPackageRepository.save_activity` accepts typed samples/messages. SQL binding
+  and raw JSON encoding occur only inside persistence; do not pre-encode raw fields.
+
+The application port calls `decoder.decode(content, activity_id)` and
+`repository.save_import(activity_id, detail, decoded)` remain unchanged. Native
+FIT timestamps/bytes in raw payloads are retained until the existing JSON encoder
+serializes them for storage; the persisted JSON representation is unchanged.
 
 ## Verification
 

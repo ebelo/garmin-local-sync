@@ -1,13 +1,16 @@
+import io
 import json
 import math
 import struct
+import zipfile
+from dataclasses import replace
 from itertools import pairwise
 
 import pytest
 from fitdecode.utils import compute_crc
 from osgeo import ogr
 
-from garmin_local_sync.adapters.decoding import parse_archive, parse_xml, sample_row
+from garmin_local_sync.adapters.decoding import parse_archive, parse_xml, sample_from_values
 from garmin_local_sync.adapters.geometry import activity_geometries
 from garmin_local_sync.adapters.geopackage import GeoPackageRepository
 from garmin_local_sync.adapters.validation import check_store
@@ -20,7 +23,8 @@ def coordinates(geometry):
 
 def rows(points):
     return [
-        sample_row(1, i, {"longitude": x, "latitude": y}, segment) for i, (x, y, segment) in enumerate(points)
+        sample_from_values(i, {"longitude": x, "latitude": y}, segment)
+        for i, (x, y, segment) in enumerate(points)
     ]
 
 
@@ -52,8 +56,8 @@ def test_zero_coordinates_are_valid_but_a_stationary_point_is_not_a_line():
 def test_backwards_timestamps_break_geometry_without_reordering_samples():
     samples = rows([(1, 1, 0), (2, 2, 0), (3, 3, 0), (4, 4, 0)])
     samples = [
-        (a, i, t, *row[3:])
-        for row, t in zip(
+        replace(sample, timestamp_utc=t)
+        for sample, t in zip(
             samples,
             [
                 "2024-01-01T00:00:00+00:00",
@@ -63,7 +67,6 @@ def test_backwards_timestamps_break_geometry_without_reordering_samples():
             ],
             strict=True,
         )
-        for a, i in [row[:2]]
     ]
     track, _ = activity_geometries(samples)
     assert coordinates(track) == [[[1, 1], [2, 2]], [[3, 3], [4, 4]]]
@@ -73,10 +76,10 @@ def test_gpx_segments_preserve_real_sample_count_and_unknown_elevation():
     data = b"""<gpx><trk><trkseg><trkpt lat="1" lon="2"><ele>40</ele></trkpt>
     <trkpt lat="2" lon="3"/></trkseg><trkseg><trkpt lat="3" lon="4"/>
     <trkpt lat="4" lon="5"/></trkseg></trk></gpx>"""
-    samples, _ = parse_xml(data, 1)
+    samples, _ = parse_xml(data)
     assert len(samples) == 4
-    assert [s[13] for s in samples] == [0, 0, 1, 1]
-    assert [s[5] for s in samples] == [40, None, None, None]
+    assert [s.segment_index for s in samples] == [0, 0, 1, 1]
+    assert [s.altitude_m for s in samples] == [40, None, None, None]
     track, _ = activity_geometries(samples)
     assert track.GetCoordinateDimension() == 2
     assert coordinates(track) == [[[2, 1], [3, 2]], [[4, 3], [5, 4]]]
@@ -89,29 +92,30 @@ def test_tcx_tracks_are_segmented_and_utc_offsets_are_normalized():
     <AltitudeMeters>123</AltitudeMeters><HeartRateBpm><Value>120</Value></HeartRateBpm></Trackpoint>
     </Track><Track><Trackpoint><Time>2024-01-01T10:01:00Z</Time></Trackpoint>
     </Track></Lap></Activity></Activities></TrainingCenterDatabase>"""
-    samples, _ = parse_xml(data, 1)
-    assert samples[0][2] == "2024-01-01T10:00:00+00:00"
-    assert samples[0][3:6] == (45, 90, 123)
-    assert samples[0][8] == 120
-    assert [s[13] for s in samples] == [0, 1]
-    assert samples[1][3:5] == (None, None)
+    samples, _ = parse_xml(data)
+    first = samples[0]
+    assert first.timestamp_utc == "2024-01-01T10:00:00+00:00"
+    assert (first.latitude, first.longitude, first.altitude_m) == (45, 90, 123)
+    assert first.heart_rate_bpm == 120
+    assert [s.segment_index for s in samples] == [0, 1]
+    assert (samples[1].latitude, samples[1].longitude) == (None, None)
 
 
 def test_xml_time_without_offset_is_not_invented_as_utc():
-    samples, _ = parse_xml(b'<gpx><trkpt lat="1" lon="2"><time>2024-01-01T10:00:00</time></trkpt></gpx>', 1)
-    assert samples[0][2] is None
-    assert json.loads(samples[0][12])["timestamp_unzoned"] == "2024-01-01T10:00:00"
+    samples, _ = parse_xml(b'<gpx><trkpt lat="1" lon="2"><time>2024-01-01T10:00:00</time></trkpt></gpx>')
+    assert samples[0].timestamp_utc is None
+    assert samples[0].raw["timestamp_unzoned"] == "2024-01-01T10:00:00"
 
 
 def test_original_xml_with_utf8_bom_is_detected():
-    rows, _, fmt = parse_archive(b'\xef\xbb\xbf<gpx><trkpt lat="1" lon="2"/></gpx>', 1)
-    assert fmt == "xml"
-    assert rows[0][3:5] == (1, 2)
+    decoded = parse_archive(b'\xef\xbb\xbf<gpx><trkpt lat="1" lon="2"/></gpx>')
+    assert decoded.source_format == "xml"
+    assert (decoded.samples[0].latitude, decoded.samples[0].longitude) == (1, 2)
 
 
 def test_malformed_xml_is_a_recoverable_item_error():
     with pytest.raises(ValueError, match="Invalid GPX/TCX XML"):
-        parse_archive(b"<gpx><broken>", 1)
+        parse_archive(b"<gpx><broken>")
 
 
 @pytest.mark.parametrize(
@@ -131,7 +135,7 @@ def test_xml_entities_are_rejected_as_recoverable_decode_errors(declaration):
         decoder.decode(blob, 1)
 
 
-def test_fit_semicircles_altitude_and_timer_stop_with_real_binary_decoder():
+def synthetic_fit():
     # Minimal synthetic FIT file, constructed from the published binary layout.
     definition = (
         bytes([0x40, 0, 0])
@@ -164,21 +168,39 @@ def test_fit_semicircles_altitude_and_timer_stop_with_real_binary_decoder():
     head += struct.pack("<H", compute_crc(head))
     blob = head + data
     blob += struct.pack("<H", compute_crc(blob))
-    samples, messages, fmt = parse_archive(blob, 1)
-    assert fmt == "fit"
+    return blob
+
+
+def test_fit_semicircles_altitude_and_timer_stop_with_real_binary_decoder():
+    blob = synthetic_fit()
+    decoded = parse_archive(blob)
+    samples, messages = decoded.samples, decoded.messages
+    assert decoded.source_format == "fit"
     assert len(samples) == 4
-    assert samples[0][3:5] == pytest.approx((45, 90), abs=1e-6)
-    assert samples[0][5] == 100
-    assert samples[1][5] is None
-    assert [s[13] for s in samples] == [0, 0, 1, 1]
-    assert samples[0][2].endswith("+00:00")
-    assert any(m[2] == "event" for m in messages)
+    assert (samples[0].latitude, samples[0].longitude) == pytest.approx((45, 90), abs=1e-6)
+    assert samples[0].altitude_m == 100
+    assert samples[1].altitude_m is None
+    assert [s.segment_index for s in samples] == [0, 0, 1, 1]
+    assert samples[0].timestamp_utc.endswith("+00:00")
+    assert any(m.message_type == "event" for m in messages)
+
+
+def test_multiple_fit_files_preserve_message_order_and_segment_boundaries():
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("one.fit", synthetic_fit())
+        output.writestr("two.fit", synthetic_fit())
+    decoded = parse_archive(archive.getvalue())
+    assert [s.index for s in decoded.samples] == list(range(8))
+    assert [s.segment_index for s in decoded.samples] == [0, 0, 1, 1, 2, 2, 3, 3]
+    assert [m.index for m in decoded.messages] == [0, 1]
+    assert [m.message_type for m in decoded.messages] == ["event", "event"]
 
 
 def test_nonfinite_elevation_is_null_with_diagnostic_preserved():
-    sample = sample_row(1, 0, {"latitude": 1, "longitude": 2, "altitude": float("nan")})
-    assert sample[5] is None
-    assert json.loads(sample[12])["_nonfinite_values"] == {"altitude": "nan"}
+    sample = sample_from_values(0, {"latitude": 1, "longitude": 2, "altitude": float("nan")})
+    assert sample.altitude_m is None
+    assert sample.raw["_nonfinite_values"] == {"altitude": "nan"}
 
 
 def test_example_passes_independent_gdal_conformance_validator(tmp_path):
@@ -213,7 +235,7 @@ def test_spatial_index_is_updated_when_an_activity_is_refreshed(tmp_path):
         1001,
         {},
         [
-            sample_row(1001, i, {"longitude": x, "latitude": y})
+            sample_from_values(i, {"longitude": x, "latitude": y})
             for i, (x, y) in enumerate([(-70, -40), (-69, -39)])
         ],
         [],

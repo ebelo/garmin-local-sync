@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from .adapters.decoding import sample_row
+from .adapters.decoding import sample_from_values
 from .adapters.geopackage import GeoPackageRepository, status
 from .adapters.validation import check_store
 from .config import UTC
@@ -44,8 +44,7 @@ def create_example(path):
                     }
                 )
             samples = [
-                sample_row(
-                    aid,
+                sample_from_values(
                     i,
                     {
                         "timestamp": base + dt.timedelta(seconds=i * 30),

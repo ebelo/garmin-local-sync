@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from garmin_local_sync.adapters.decoding import sample_row
+from garmin_local_sync.adapters.decoding import sample_from_values
 from garmin_local_sync.adapters.geopackage import GeoPackageRepository
 from garmin_local_sync.application.sync import refresh_cutoff
 from garmin_local_sync.cli import main
@@ -82,7 +82,7 @@ def test_refresh_failure_invalidates_the_old_completion_checkpoint(tmp_path):
     path = tmp_path / "example.gpkg"
     create_example(path)
     store = GeoPackageRepository(path)
-    row = sample_row(1001, 0, {"longitude": 30, "latitude": 40})
+    row = sample_from_values(0, {"longitude": 30, "latitude": 40})
     with pytest.raises(sqlite3.IntegrityError):
         store.save_activity(1001, {}, [row, row], [], "synthetic")
     assert (
