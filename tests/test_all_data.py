@@ -167,3 +167,17 @@ def test_backfill_forwards_all_data_options_only_to_sync(tmp_path, monkeypatch):
     assert all("--all-data" not in command for command in calls[1:])
     report = json.loads((tmp_path / "backfill-status.json").read_text())
     assert report["all_data"] is True
+
+
+def test_overnight_detail_dates_use_requested_day_and_refresh_cannot_erase_next_day(tmp_path):
+    with StoreContext(tmp_path / "test.gpkg") as store:
+        first = {"startTimestampLocal": "2020-01-01T22:00:00", "hrvReadings": [[1, 40]]}
+        second = {"startTimestampLocal": "2020-01-02T22:00:00", "hrvReadings": [[2, 41]]}
+        store.response("hrv_detail", "2020-01-02/2020-01-02", first, "2020-01-02", "2020-01-02")
+        store.response("hrv_detail", "2020-01-03/2020-01-03", second, "2020-01-03", "2020-01-03")
+        store.response("hrv_detail", "2020-01-02/2020-01-02", first, "2020-01-02", "2020-01-02")
+        rows = store.db.execute(
+            "SELECT calendar_date,payload_json FROM wellness_records ORDER BY calendar_date"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["2020-01-02", "2020-01-03"]
+        assert json.loads(rows[1][1])["hrvReadings"] == [[2, 41]]

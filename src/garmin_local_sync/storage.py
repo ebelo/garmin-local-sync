@@ -309,6 +309,10 @@ class Store:
             entries = records(data)
             for index, record in enumerate(entries):
                 day = record_date(record)
+                if dataset in DETAIL_DATASETS and start == end:
+                    # Overnight data can start on the preceding local date. Its
+                    # daily identity is the requested day, not that start timestamp.
+                    day = start
                 if day is None and start == end:
                     day = start
                 rid = str(day or record.get("id") or record.get("uuid") or f"{key}:{index}")

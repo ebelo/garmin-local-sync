@@ -6,6 +6,8 @@
   summaries/details, individual weight measurements, women's-health endpoints,
   performed activity workouts and multisport child activities.
 - Preserve multiple same-day weight measurements and independent workout checkpoints.
+- Associate overnight detailed health responses with their requested day so refreshing
+  one night cannot delete the following night's normalized records.
 - Forward comprehensive mode to detached backfills and freeze their ending date.
 - Add endpoint-reference coverage, complete-mode retry/idempotence tests and scope docs.
 
