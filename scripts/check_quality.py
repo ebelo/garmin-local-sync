@@ -112,6 +112,8 @@ def main():
                 installed,
                 "-c",
                 "import garmin_local_sync, sys; from pathlib import Path; "
+                "from importlib.metadata import version; "
+                "assert garmin_local_sync.__version__ == version('garmin-local-sync'); "
                 "assert Path(garmin_local_sync.__file__).is_relative_to(Path(sys.prefix)); "
                 "print(garmin_local_sync.__file__)",
             ],
